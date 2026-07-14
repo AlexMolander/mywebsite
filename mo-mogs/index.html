@@ -646,6 +646,7 @@ canvas{max-width:100%;display:block;}
         </button>
         <button class="btn ghost" id="manualFoodBtn">+ Manual Entry</button>
         <button class="btn ghost" id="savedMealsBtn">Saved Meals</button>
+        <button class="btn ghost" id="importMfpBtn">Import from MyFitnessPal</button>
       </div>
     </div>
     <div class="remaining-hero" id="remainingHero"></div>
@@ -1819,12 +1820,163 @@ function openNewSavedMealModal(){
     saveState(); toast('Recipe saved'); openSavedMealsModal();
   });
 }
+/* ---- Import from MyFitnessPal CSV export ---- */
+function parseCsv(text){
+  const rows=[]; let row=[]; let field=''; let inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){
+        if(text[i+1]==='"'){ field+='"'; i++; } else inQuotes=false;
+      } else field+=c;
+    } else {
+      if(c==='"') inQuotes=true;
+      else if(c===','){ row.push(field); field=''; }
+      else if(c==='\n' || c==='\r'){
+        if(c==='\r' && text[i+1]==='\n') i++;
+        row.push(field); field='';
+        if(row.length>1 || row[0]!=='') rows.push(row);
+        row=[];
+      } else field+=c;
+    }
+  }
+  if(field!=='' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function normalizeImportDate(raw){
+  raw=(raw||'').trim();
+  let m=raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m=raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  return null;
+}
+function normalizeImportMeal(raw){
+  const m=(raw||'').toLowerCase();
+  if(m.includes('breakfast')) return 'Breakfast';
+  if(m.includes('lunch')) return 'Lunch';
+  if(m.includes('dinner')) return 'Dinner';
+  return 'Snacks';
+}
+function findCol(headers, ...matchers){
+  for(const matcher of matchers){
+    const i=headers.findIndex(h=>matcher(h.trim().toLowerCase()));
+    if(i>=0) return i;
+  }
+  return -1;
+}
+function parseMfpCsv(text){
+  const rows=parseCsv(text).filter(r=>r.some(c=>c.trim()!==''));
+  if(rows.length<2) return { entries:[], error:'No data rows found in that file.' };
+  const headers=rows[0];
+  const col={
+    date: findCol(headers, h=>h==='date'),
+    meal: findCol(headers, h=>h==='meal'),
+    food: findCol(headers, h=>h==='food', h=>h==='food name'),
+    calories: findCol(headers, h=>h==='calories'),
+    protein: findCol(headers, h=>h.startsWith('protein')),
+    carbs: findCol(headers, h=>h.startsWith('carbohydrate')),
+    fat: findCol(headers, h=>h==='fat (g)', h=>h==='fat'),
+    saturatedFat: findCol(headers, h=>h==='saturated fat'),
+    sodium: findCol(headers, h=>h.startsWith('sodium')),
+    sugar: findCol(headers, h=>h==='sugar' || h==='sugars'),
+    fiber: findCol(headers, h=>h.startsWith('fiber')),
+    cholesterol: findCol(headers, h=>h.startsWith('cholesterol')),
+    potassium: findCol(headers, h=>h==='potassium'),
+    calcium: findCol(headers, h=>h==='calcium'),
+    iron: findCol(headers, h=>h==='iron'),
+    vitaminA: findCol(headers, h=>h==='vitamin a'),
+    vitaminC: findCol(headers, h=>h==='vitamin c'),
+  };
+  if(col.date<0 || col.food<0 || col.calories<0){
+    return { entries:[], error:'Unrecognized CSV format — expected the MyFitnessPal Nutrition Summary export with Date/Meal/Food/Calories columns.' };
+  }
+  const num=v=>{ const n=Number(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?0:n; };
+  const entries=[];
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];
+    const date=normalizeImportDate(r[col.date]);
+    const food=(r[col.food]||'').trim();
+    if(!date || !food) continue;
+    const micros={};
+    if(col.sodium>=0) micros.sodium=num(r[col.sodium]);
+    if(col.sugar>=0) micros.sugar=num(r[col.sugar]);
+    if(col.fiber>=0) micros.fiber=num(r[col.fiber]);
+    if(col.cholesterol>=0) micros.cholesterol=num(r[col.cholesterol]);
+    if(col.saturatedFat>=0) micros.saturatedFat=num(r[col.saturatedFat]);
+    if(col.potassium>=0) micros.potassium=num(r[col.potassium]);
+    if(col.calcium>=0) micros.calcium=num(r[col.calcium]);
+    if(col.iron>=0) micros.iron=num(r[col.iron]);
+    if(col.vitaminA>=0) micros.vitaminA=num(r[col.vitaminA]);
+    if(col.vitaminC>=0) micros.vitaminC=num(r[col.vitaminC]);
+    Object.keys(micros).forEach(k=>{ if(!micros[k]) delete micros[k]; });
+    entries.push({
+      date, meal:normalizeImportMeal(r[col.meal]), name:food,
+      calories:num(r[col.calories]), protein:num(r[col.protein]), carbs:num(r[col.carbs]), fat:num(r[col.fat]),
+      micros,
+    });
+  }
+  return { entries, error:null };
+}
+function openImportMfpModal(){
+  openModal(`
+    <div class="modal-head"><h3>Import from MyFitnessPal</h3><button class="icon-btn" id="closeModalBtn" aria-label="Close">✕</button></div>
+    <p style="font-size:12.5px;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
+      In MyFitnessPal: <b>More → Settings → Account Data → Export Account Data</b>, then request your
+      <b>Nutrition Summary</b> CSV (emailed to you). Upload that file below to bulk-import every day it covers —
+      no retyping.
+    </p>
+    <div class="field"><label>Nutrition Summary CSV</label><input type="file" accept=".csv,text/csv" id="mfp-file"></div>
+    <div id="mfp-status" class="empty" style="display:none;"></div>
+    <button class="btn primary" id="mfp-import" style="width:100%;margin-top:6px;" disabled>Choose a file first</button>
+  `);
+  $('#closeModalBtn').addEventListener('click', closeModal);
+  let parsed=null;
+  $('#mfp-file').addEventListener('change', e=>{
+    const file=e.target.files[0];
+    if(!file) return;
+    const statusEl=$('#mfp-status'); statusEl.style.display='block'; statusEl.textContent='Reading file…';
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const result=parseMfpCsv(String(reader.result));
+      if(result.error){
+        statusEl.textContent=result.error;
+        $('#mfp-import').disabled=true; $('#mfp-import').textContent='Choose a file first';
+        parsed=null; return;
+      }
+      parsed=result.entries;
+      const dates=new Set(parsed.map(e=>e.date));
+      statusEl.textContent=`Found ${parsed.length} food entries across ${dates.size} day${dates.size===1?'':'s'}.`;
+      $('#mfp-import').disabled=false; $('#mfp-import').textContent=`Import ${parsed.length} Entries`;
+    };
+    reader.onerror=()=>{ statusEl.textContent='Could not read that file.'; };
+    reader.readAsText(file);
+  });
+  $('#mfp-import').addEventListener('click', ()=>{
+    if(!parsed || !parsed.length) return;
+    let added=0, latestDate=null;
+    parsed.forEach(e=>{
+      const log=ensureNutritionLog(e.date);
+      const dup=log.meals.some(m=>m.name===e.name && m.meal===e.meal && Math.round(m.calories)===Math.round(e.calories));
+      if(dup) return;
+      log.meals.push({ id:uid(), name:e.name, meal:e.meal, time:'', calories:e.calories, protein:e.protein, carbs:e.carbs, fat:e.fat, micros:e.micros });
+      added++;
+      if(!latestDate || e.date>latestDate) latestDate=e.date;
+    });
+    saveState();
+    closeModal();
+    if(latestDate){ $('#nutritionDate').value=latestDate; }
+    renderNutritionTab();
+    toast(`Imported ${added} entries from MyFitnessPal`);
+  });
+}
 function initNutritionEvents(){
   $('#nutritionDate').value = todayKey();
   $('#scanBtn').addEventListener('click', openScanModal);
   $('#searchFoodBtn').addEventListener('click', openSearchFoodModal);
   $('#manualFoodBtn').addEventListener('click', ()=>openManualFoodModal());
   $('#savedMealsBtn').addEventListener('click', openSavedMealsModal);
+  $('#importMfpBtn').addEventListener('click', openImportMfpModal);
   $('#editGoalsBtn').addEventListener('click', openEditGoalsModal);
   $('#mealsList').addEventListener('click', e=>{
     const del=e.target.closest('[data-act=delmeal]');
