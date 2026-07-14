@@ -1611,31 +1611,46 @@ function rankFoodResults(products, q){
     .sort((a,b)=>b.s-a.s)
     .map(x=>x.p);
 }
-async function doFoodSearch(q, presetMeal){
+function offSearchUrl(term){
+  return `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&json=1&page_size=40`;
+}
+async function fetchFoodBatch(term){
+  const res=await fetch(offSearchUrl(term));
+  const data=await res.json();
+  return (data.products||[]).filter(p=>p.product_name);
+}
+async function doFoodSearch(q, presetMeal, attempt){
+  attempt=attempt||1;
   const results=$('#sf-results');
   if(!q){ results.innerHTML=''; return; }
-  results.innerHTML='<div class="empty">Searching…</div>';
+  if(attempt===1) results.innerHTML='<div class="empty">Searching…</div>';
+  let raw;
   try{
-    const url=`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=40`;
-    const res=await fetch(url);
-    const data=await res.json();
-    const raw=(data.products||[]).filter(p=>p.product_name);
-    let products=rankFoodResults(raw, q).slice(0,15);
-    if(!products.length) products=raw.slice(0,15);
-    if(!products.length){ results.innerHTML='<div class="empty">No results found.</div>'; return; }
-    results.innerHTML = products.map((p,i)=>`
-      <button class="search-result" data-i="${i}" data-act="pick">
-        <img src="${p.image_small_url||''}" alt="" onerror="this.style.display='none'">
-        <div class="info">
-          <div class="n">${escapeHtml(p.product_name)}</div>
-          ${p.brands?`<div class="brand">${escapeHtml(p.brands)}</div>`:''}
-        </div>
-        <div class="kcal"><div class="num">${Math.round(p.nutriments?.['energy-kcal_100g']||0)}</div><div class="unit">kcal/100g</div></div>
-      </button>`).join('');
-    results.querySelectorAll('[data-act=pick]').forEach(btn=>{
-      btn.addEventListener('click', ()=> openServingModal(products[Number(btn.dataset.i)], presetMeal));
-    });
-  }catch(e){ results.innerHTML='<div class="empty">Search failed — check your connection.</div>'; }
+    raw=await fetchFoodBatch(q);
+  }catch(e){
+    // Open Food Facts occasionally rejects a request outright (rate limiting). Retry sequentially.
+    if(attempt<3){ await new Promise(r=>setTimeout(r,400)); return doFoodSearch(q, presetMeal, attempt+1); }
+    results.innerHTML='<div class="empty">Search failed — check your connection and try again.</div>'; return;
+  }
+  const products=rankFoodResults(raw, q).slice(0,15);
+  if(!products.length){
+    // Open Food Facts' search isn't relevance-sorted — an identical query can
+    // return a different, sometimes-empty-of-matches batch. Retry before giving up.
+    if(attempt<3){ await new Promise(r=>setTimeout(r,300)); return doFoodSearch(q, presetMeal, attempt+1); }
+    results.innerHTML='<div class="empty">No good matches for "'+escapeHtml(q)+'". Try a different search, or use Manual Entry / Saved Meals.</div>'; return;
+  }
+  results.innerHTML = products.map((p,i)=>`
+    <button class="search-result" data-i="${i}" data-act="pick">
+      <img src="${p.image_small_url||''}" alt="" onerror="this.style.display='none'">
+      <div class="info">
+        <div class="n">${escapeHtml(p.product_name)}</div>
+        ${p.brands?`<div class="brand">${escapeHtml(p.brands)}</div>`:''}
+      </div>
+      <div class="kcal"><div class="num">${Math.round(p.nutriments?.['energy-kcal_100g']||0)}</div><div class="unit">kcal/100g</div></div>
+    </button>`).join('');
+  results.querySelectorAll('[data-act=pick]').forEach(btn=>{
+    btn.addEventListener('click', ()=> openServingModal(products[Number(btn.dataset.i)], presetMeal));
+  });
 }
 let zxingReader=null;
 function openScanModal(presetMeal){
