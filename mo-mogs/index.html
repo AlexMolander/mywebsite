@@ -1587,15 +1587,41 @@ function openSearchFoodModal(presetMeal){
   input.addEventListener('input', debounce(()=>doFoodSearch(input.value.trim(), presetMeal), 450));
   input.focus();
 }
+function rankFoodResults(products, q){
+  const query=q.trim().toLowerCase();
+  const words=query.split(/\s+/).filter(Boolean);
+  function score(p){
+    const name=(p.product_name||'').toLowerCase();
+    if(!name) return -1;
+    let s=-1;
+    if(name===query) s=100;
+    else if(name.startsWith(query)) s=80;
+    else if(new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\\b`).test(name)) s=60;
+    else if(words.every(w=>name.includes(w))) s=40;
+    else if(name.includes(query)) s=20;
+    else return -1;
+    // prefer complete product data and shorter, cleaner names
+    if(p.nutriments && p.nutriments['energy-kcal_100g']!=null) s+=5;
+    s-= Math.min(name.length/20, 5);
+    return s;
+  }
+  return products
+    .map(p=>({p,s:score(p)}))
+    .filter(x=>x.s>=0)
+    .sort((a,b)=>b.s-a.s)
+    .map(x=>x.p);
+}
 async function doFoodSearch(q, presetMeal){
   const results=$('#sf-results');
   if(!q){ results.innerHTML=''; return; }
   results.innerHTML='<div class="empty">Searching…</div>';
   try{
-    const url=`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=12`;
+    const url=`https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=40`;
     const res=await fetch(url);
     const data=await res.json();
-    const products=(data.products||[]).filter(p=>p.product_name);
+    const raw=(data.products||[]).filter(p=>p.product_name);
+    let products=rankFoodResults(raw, q).slice(0,15);
+    if(!products.length) products=raw.slice(0,15);
     if(!products.length){ results.innerHTML='<div class="empty">No results found.</div>'; return; }
     results.innerHTML = products.map((p,i)=>`
       <button class="search-result" data-i="${i}" data-act="pick">
