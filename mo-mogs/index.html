@@ -1951,6 +1951,13 @@ function tokenToNumber(tok){
  * Detect and parse that structure directly rather than assuming name+numbers share a line.
  */
 function parseMfpDiaryStructuredText(text){
+  // PDF text extraction can split a number from its unit into separate tokens
+  // ("19 g" instead of "19g"), split possessives ("Wyman ' s"), and space out
+  // parentheses ("130 ml ( s )"). Re-merge those before anything else, or every
+  // numeric row misaligns and the "is this food name complete" check breaks.
+  text=text.replace(/(\d)\s+(g|mg|mcg|kcal)\b/gi,'$1$2')
+    .replace(/(\w)\s+'\s+(\w)/g,"$1'$2")
+    .replace(/\(\s*([^()]*?)\s*\)/g,'($1)');
   const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
   const dateLineIdxs=[];
   lines.forEach((l,i)=>{ if(parseMfpPastedDate(l)) dateLineIdxs.push(i); });
@@ -1987,9 +1994,11 @@ function parseMfpDiaryStructuredText(text){
     let curMeal='Snacks';
     const names=[]; let pending=null;
     // A long food name can wrap across two extracted lines (e.g. "...Squares," / "Original, 1 bar").
-    // A finished name ends in its serving size (a number, optionally with a short unit); anything
-    // else is treated as incomplete and merged with the following line.
-    const looksComplete=s=>/\d+(\.\d+)?\s*[A-Za-z()%]*$/.test(s);
+    // A finished name ends in its serving size (a number, optionally with a short unit — extraction
+    // often pads these with extra internal spaces, e.g. "130 ml (s)", so tolerate whitespace in the
+    // tail too); anything that never reaches a trailing number is treated as incomplete and merged
+    // with the following line.
+    const looksComplete=s=>/\d+(\.\d+)?[\sA-Za-z()%]*$/.test(s);
     for(let j=foodsIdx+1; j<chunk.length && names.length<dataRows.length; j++){
       const line=chunk[j];
       if(/^(breakfast|lunch|dinner|snacks?)\b/i.test(line) && line.length<20){
@@ -2015,7 +2024,7 @@ function parseMfpDiaryStructuredText(text){
       if(vals.fiber) micros.fiber=vals.fiber;
       if(vals.cholesterol) micros.cholesterol=vals.cholesterol;
       entries.push({
-        date, meal:names[k].meal, name:names[k].name,
+        date, meal:names[k].meal, name:names[k].name.replace(/\s+/g,' ').replace(/ ,/g,',').trim(),
         calories:vals.calories||0, protein:vals.protein||0, carbs:vals.carbs||0, fat:vals.fat||0,
         micros,
       });
