@@ -1968,19 +1968,22 @@ function parseMfpDiaryStructuredText(text){
     });
     if(headerIdx<0 || !date) continue;
     const columnOrder=chunk[headerIdx].split(/\s+/).map(mfpCanonicalMetric).filter(Boolean);
-    // Collect consecutive pure-number rows right after the header.
+    // Find the "FOODS" section marker first, then read the numeric data as one token
+    // stream between the header and that marker — chunked in groups of columnOrder.length.
+    // This tolerates PDF text extraction splitting/merging physical lines unpredictably,
+    // since it only relies on token *order* being preserved, not line boundaries.
+    let foodsIdx=chunk.findIndex((l,li)=>li>headerIdx && /^foods\b/i.test(l));
+    if(foodsIdx<0) foodsIdx=chunk.length;
+    const tokenStream=chunk.slice(headerIdx+1, foodsIdx).flatMap(l=>l.split(/\s+/)).filter(Boolean);
+    const numericRun=[];
+    for(const tok of tokenStream){ if(!isNumericToken(tok)) break; numericRun.push(tok); }
     const dataRows=[];
-    let i=headerIdx+1;
-    for(; i<chunk.length; i++){
-      const tokens=chunk[i].split(/\s+/);
-      if(tokens.length!==columnOrder.length || !tokens.every(isNumericToken)) break;
-      dataRows.push(tokens.map(tokenToNumber));
+    for(let p=0; p+columnOrder.length<=numericRun.length; p+=columnOrder.length){
+      dataRows.push(numericRun.slice(p,p+columnOrder.length).map(tokenToNumber));
     }
     if(dataRows.length<2) continue; // need at least one food + one totals row
     dataRows.pop(); // last pure-number row is always the day's totals
-    // Find the "FOODS" section marker, then walk meal headers + food name lines.
-    const foodsIdx=chunk.findIndex((l,li)=>li>i && /^foods$/i.test(l));
-    if(foodsIdx<0){ warnings.push(`Found macro data for ${date} but no "FOODS" section to name it — skipped.`); continue; }
+    if(foodsIdx>=chunk.length){ warnings.push(`Found macro data for ${date} but no "FOODS" section to name it — skipped.`); continue; }
     let curMeal='Snacks';
     const names=[]; let pending=null;
     // A long food name can wrap across two extracted lines (e.g. "...Squares," / "Original, 1 bar").
@@ -1989,7 +1992,7 @@ function parseMfpDiaryStructuredText(text){
     const looksComplete=s=>/\d+(\.\d+)?\s*[A-Za-z()%]*$/.test(s);
     for(let j=foodsIdx+1; j<chunk.length && names.length<dataRows.length; j++){
       const line=chunk[j];
-      if(/^(breakfast|lunch|dinner|snacks?)$/i.test(line)){
+      if(/^(breakfast|lunch|dinner|snacks?)\b/i.test(line) && line.length<20){
         if(pending){ names.push(pending); pending=null; }
         curMeal=normalizeImportMeal(line); continue;
       }
@@ -2155,13 +2158,16 @@ function openImportMfpModal(){
       for(let p=1;p<=pdf.numPages;p++){
         const page=await pdf.getPage(p);
         const content=await page.getTextContent();
-        let lastY=null, line='';
+        let lastY=null;
         content.items.forEach(item=>{
-          if(lastY!==null && Math.abs(item.transform[5]-lastY)>2){ text+=line+'\n'; line=''; }
-          line+=item.str+' ';
-          lastY=item.transform[5];
+          // Prefer pdf.js's own line-break signal (hasEOL) over guessing from Y-position —
+          // it reflects the PDF's actual internal text layout, which manual coordinate
+          // thresholds can get wrong (causing false line breaks or merged rows).
+          if(lastY!==null && item.transform && Math.abs(item.transform[5]-lastY)>2 && !/\s$/.test(text)) text+='\n';
+          text+=item.str;
+          text+=item.hasEOL ? '\n' : ' ';
+          if(item.transform) lastY=item.transform[5];
         });
-        text+=line+'\n';
       }
       $('#mfp-paste').value=text.trim();
       statusEl.textContent=`Extracted text from ${pdf.numPages} page(s) — click "Parse Pasted Text" below to review.`;
