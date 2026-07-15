@@ -1918,20 +1918,104 @@ function parseMfpCsv(text){
   }
   return { entries, error:null };
 }
+const MFP_METRIC_WORDS=['calories','carbs','carbohydrate','carbohydrates','fat','protein','sodium','sugar','sugars'];
+function parsePastedNumber(s){ const n=Number(String(s).replace(/,/g,'')); return isNaN(n)?0:n; }
+function parseMfpPastedDate(line){
+  let m=line.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m=line.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m) return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  const cleaned=line.replace(/^\s*\w+day,?\s*/i,'').trim();
+  const d=new Date(cleaned);
+  if(!isNaN(d.getTime()) && /[A-Za-z]+\s+\d{1,2},?\s+\d{4}/.test(cleaned)) return todayKey(d);
+  return null;
+}
+function parseMfpPastedText(text){
+  const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
+  let columnOrder=['calories','carbs','fat','protein','sodium','sugar'];
+  const headerLine=lines.find(l=>{
+    const low=l.toLowerCase();
+    const hits=MFP_METRIC_WORDS.filter(w=>low.includes(w));
+    return hits.length>=3 && !/\d/.test(l);
+  });
+  if(headerLine){
+    const found=[];
+    const low=headerLine.toLowerCase();
+    const idxs=MFP_METRIC_WORDS.map(w=>({w,i:low.indexOf(w)})).filter(x=>x.i>=0).sort((a,b)=>a.i-b.i);
+    idxs.forEach(x=>{
+      const key=x.w.startsWith('carb')?'carbs':x.w.startsWith('sugar')?'sugar':x.w;
+      if(!found.includes(key)) found.push(key);
+    });
+    if(found.length>=2) columnOrder=found;
+  }
+  let curDate=null, curMeal='Snacks';
+  const entries=[]; const warnings=[];
+  for(const line of lines){
+    const maybeDate=parseMfpPastedDate(line);
+    if(maybeDate){ curDate=maybeDate; continue; }
+    const mealMatch=line.match(/^(Breakfast|Lunch|Dinner|Snacks?)\b/i);
+    if(mealMatch && line.length<40){ curMeal=normalizeImportMeal(mealMatch[1]); continue; }
+    if(/^(totals?|daily goal|remaining|your daily goal|calories remaining|sub[-\s]?total)\b/i.test(line)) continue;
+    const numMatches=[...line.matchAll(/-?\d[\d,]*\.?\d*/g)];
+    if(!numMatches.length) continue;
+    // Real data columns are the trailing N numbers (N = columnOrder.length) — anything
+    // earlier (e.g. a serving size like "1 cup" or "6 oz" inside the food name) is not data.
+    const dataMatches=numMatches.slice(-columnOrder.length);
+    const nameCutPos=dataMatches[0].index;
+    let name=line.slice(0,nameCutPos).trim().replace(/[-–—,:\s]+$/,'');
+    if(!name) continue;
+    if(MFP_METRIC_WORDS.some(w=>name.toLowerCase()===w)) continue;
+    if(/totals?$/i.test(name)) continue;
+    if(!curDate){ warnings.push(`Skipped "${name}" — no date found above it.`); continue; }
+    const vals={};
+    columnOrder.forEach((key,i)=>{ if(dataMatches[i]!=null) vals[key]=parsePastedNumber(dataMatches[i][0]); });
+    entries.push({
+      date:curDate, meal:curMeal, name,
+      calories:vals.calories||0, protein:vals.protein||0, carbs:vals.carbs||0, fat:vals.fat||0,
+      micros: vals.sodium||vals.sugar ? {...(vals.sodium?{sodium:vals.sodium}:{}), ...(vals.sugar?{sugar:vals.sugar}:{})} : {},
+    });
+  }
+  return { entries, warnings, columnOrder };
+}
+function commitImportEntries(entries){
+  let added=0, latestDate=null;
+  entries.forEach(e=>{
+    const log=ensureNutritionLog(e.date);
+    const dup=log.meals.some(m=>m.name===e.name && m.meal===e.meal && Math.round(m.calories)===Math.round(e.calories));
+    if(dup) return;
+    log.meals.push({ id:uid(), name:e.name, meal:e.meal, time:'', calories:e.calories, protein:e.protein, carbs:e.carbs, fat:e.fat, micros:e.micros||{} });
+    added++;
+    if(!latestDate || e.date>latestDate) latestDate=e.date;
+  });
+  saveState();
+  closeModal();
+  if(latestDate){ $('#nutritionDate').value=latestDate; }
+  renderNutritionTab();
+  toast(`Imported ${added} entries from MyFitnessPal`);
+}
 function openImportMfpModal(){
   openModal(`
     <div class="modal-head"><h3>Import from MyFitnessPal</h3><button class="icon-btn" id="closeModalBtn" aria-label="Close">✕</button></div>
-    <p style="font-size:12.5px;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
-      In MyFitnessPal: <b>More → Settings → Account Data → Export Account Data</b>, then request your
-      <b>Nutrition Summary</b> CSV (emailed to you). Upload that file below to bulk-import every day it covers —
-      no retyping.
+    <div class="dash-title"><span>Premium: CSV Export</span><span class="line"></span></div>
+    <p style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:10px;">
+      MyFitnessPal Premium: <b>myfitnesspal.com → Settings → Account → Download Your Data</b> (desktop browser).
+      Upload the <b>Meal-Level Nutrition Details</b> CSV they email you.
     </p>
-    <div class="field"><label>Nutrition Summary CSV</label><input type="file" accept=".csv,text/csv" id="mfp-file"></div>
+    <div class="field"><label>Nutrition CSV</label><input type="file" accept=".csv,text/csv" id="mfp-file"></div>
     <div id="mfp-status" class="empty" style="display:none;"></div>
     <button class="btn primary" id="mfp-import" style="width:100%;margin-top:6px;" disabled>Choose a file first</button>
+
+    <div class="dash-title" style="margin-top:22px;"><span>Free Account: Paste Report</span><span class="line"></span></div>
+    <p style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:10px;">
+      In MyFitnessPal on the web: <b>Food tab → scroll down → View Full Report (Printable)</b>, pick a date range,
+      then select-all + copy the page and paste it below.
+    </p>
+    <div class="field"><textarea id="mfp-paste" rows="6" placeholder="Paste your MyFitnessPal report text here…"></textarea></div>
+    <button class="btn ghost" id="mfp-parse" style="width:100%;">Parse Pasted Text</button>
+    <div id="mfp-preview"></div>
   `);
   $('#closeModalBtn').addEventListener('click', closeModal);
-  let parsed=null;
+  let parsedCsv=null;
   $('#mfp-file').addEventListener('change', e=>{
     const file=e.target.files[0];
     if(!file) return;
@@ -1942,32 +2026,45 @@ function openImportMfpModal(){
       if(result.error){
         statusEl.textContent=result.error;
         $('#mfp-import').disabled=true; $('#mfp-import').textContent='Choose a file first';
-        parsed=null; return;
+        parsedCsv=null; return;
       }
-      parsed=result.entries;
-      const dates=new Set(parsed.map(e=>e.date));
-      statusEl.textContent=`Found ${parsed.length} food entries across ${dates.size} day${dates.size===1?'':'s'}.`;
-      $('#mfp-import').disabled=false; $('#mfp-import').textContent=`Import ${parsed.length} Entries`;
+      parsedCsv=result.entries;
+      const dates=new Set(parsedCsv.map(e=>e.date));
+      statusEl.textContent=`Found ${parsedCsv.length} food entries across ${dates.size} day${dates.size===1?'':'s'}.`;
+      $('#mfp-import').disabled=false; $('#mfp-import').textContent=`Import ${parsedCsv.length} Entries`;
     };
     reader.onerror=()=>{ statusEl.textContent='Could not read that file.'; };
     reader.readAsText(file);
   });
-  $('#mfp-import').addEventListener('click', ()=>{
-    if(!parsed || !parsed.length) return;
-    let added=0, latestDate=null;
-    parsed.forEach(e=>{
-      const log=ensureNutritionLog(e.date);
-      const dup=log.meals.some(m=>m.name===e.name && m.meal===e.meal && Math.round(m.calories)===Math.round(e.calories));
-      if(dup) return;
-      log.meals.push({ id:uid(), name:e.name, meal:e.meal, time:'', calories:e.calories, protein:e.protein, carbs:e.carbs, fat:e.fat, micros:e.micros });
-      added++;
-      if(!latestDate || e.date>latestDate) latestDate=e.date;
-    });
-    saveState();
-    closeModal();
-    if(latestDate){ $('#nutritionDate').value=latestDate; }
-    renderNutritionTab();
-    toast(`Imported ${added} entries from MyFitnessPal`);
+  $('#mfp-import').addEventListener('click', ()=>{ if(parsedCsv && parsedCsv.length) commitImportEntries(parsedCsv); });
+
+  let parsedPaste=null;
+  $('#mfp-parse').addEventListener('click', ()=>{
+    const text=$('#mfp-paste').value;
+    const preview=$('#mfp-preview');
+    if(!text.trim()){ preview.innerHTML='<div class="empty">Paste your report text above first.</div>'; return; }
+    const {entries, warnings}=parseMfpPastedText(text);
+    parsedPaste=entries;
+    if(!entries.length){
+      preview.innerHTML='<div class="empty">Couldn\'t find any food entries in that text. Make sure you pasted the full report including the date headers and meal names.</div>';
+      return;
+    }
+    const dates=new Set(entries.map(e=>e.date));
+    preview.innerHTML = `
+      <div class="empty" style="text-align:left;padding:10px 0;">
+        Parsed <b>${entries.length}</b> entries across <b>${dates.size}</b> day${dates.size===1?'':'s'}.
+        ${warnings.length?`<br><span style="color:var(--red);">${warnings.length} line(s) skipped — check they weren't real food entries.</span>`:''}
+        Review below before importing:
+      </div>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:10px;">
+        ${entries.map(e=>`<div class="meal-item" style="padding:6px 0;">
+          <div class="meal-top"><span class="nm">${escapeHtml(e.name)}</span><span class="time mono">${e.date} · ${e.meal}</span></div>
+          <div class="meal-macros mono"><span>${Math.round(e.calories)} kcal</span><span>P ${Math.round(e.protein)}g</span><span>C ${Math.round(e.carbs)}g</span><span>F ${Math.round(e.fat)}g</span></div>
+        </div>`).join('')}
+      </div>
+      <button class="btn primary" id="mfp-paste-import" style="width:100%;">Import ${entries.length} Entries</button>
+    `;
+    $('#mfp-paste-import').addEventListener('click', ()=>{ if(parsedPaste && parsedPaste.length) commitImportEntries(parsedPaste); });
   });
 }
 function initNutritionEvents(){
