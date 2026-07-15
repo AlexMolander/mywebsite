@@ -1922,7 +1922,105 @@ function parseMfpCsv(text){
   }
   return { entries, error:null };
 }
-const MFP_METRIC_WORDS=['calories','carbs','carbohydrate','carbohydrates','fat','protein','sodium','sugar','sugars'];
+const MFP_METRIC_WORDS=['calories','carbs','carbohydrate','carbohydrates','fat','protein','sodium','sugar','sugars','cholest','cholesterol','fiber','fibre'];
+function mfpCanonicalMetric(word){
+  const w=word.toLowerCase();
+  if(w.startsWith('calor')) return 'calories';
+  if(w.startsWith('carb')) return 'carbs';
+  if(w==='fat') return 'fat';
+  if(w.startsWith('protein')) return 'protein';
+  if(w.startsWith('cholest')) return 'cholesterol';
+  if(w.startsWith('sodium')) return 'sodium';
+  if(w.startsWith('sugar')) return 'sugar';
+  if(w.startsWith('fib')) return 'fiber';
+  return null;
+}
+function isNumericToken(tok){
+  return tok==='--' || tok==='-' || /^-?[\d,]+(\.\d+)?(g|mg|mcg|kcal)?$/i.test(tok);
+}
+function tokenToNumber(tok){
+  if(tok==='--' || tok==='-') return 0;
+  const n=Number(String(tok).replace(/[^0-9.\-]/g,''));
+  return isNaN(n)?0:n;
+}
+/**
+ * MyFitnessPal's "Printable Diary" PDF export renders the nutrition table's numeric
+ * columns and food-name column as separate text blocks (a PDF text-extraction-order
+ * quirk, not a copy/paste artifact) — all N data rows appear together, then all the
+ * meal headers + food names appear together afterward, in matching top-to-bottom order.
+ * Detect and parse that structure directly rather than assuming name+numbers share a line.
+ */
+function parseMfpDiaryStructuredText(text){
+  const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
+  const dateLineIdxs=[];
+  lines.forEach((l,i)=>{ if(parseMfpPastedDate(l)) dateLineIdxs.push(i); });
+  if(!dateLineIdxs.length) return null;
+  const entries=[]; const warnings=[];
+  for(let d=0; d<dateLineIdxs.length; d++){
+    const start=dateLineIdxs[d];
+    const end=d+1<dateLineIdxs.length ? dateLineIdxs[d+1] : lines.length;
+    const chunk=lines.slice(start, end);
+    const date=parseMfpPastedDate(chunk[0]);
+    const headerIdx=chunk.findIndex(l=>{
+      const words=l.split(/\s+/);
+      const metricHits=words.filter(w=>mfpCanonicalMetric(w));
+      return metricHits.length>=3 && !/\d/.test(l);
+    });
+    if(headerIdx<0 || !date) continue;
+    const columnOrder=chunk[headerIdx].split(/\s+/).map(mfpCanonicalMetric).filter(Boolean);
+    // Collect consecutive pure-number rows right after the header.
+    const dataRows=[];
+    let i=headerIdx+1;
+    for(; i<chunk.length; i++){
+      const tokens=chunk[i].split(/\s+/);
+      if(tokens.length!==columnOrder.length || !tokens.every(isNumericToken)) break;
+      dataRows.push(tokens.map(tokenToNumber));
+    }
+    if(dataRows.length<2) continue; // need at least one food + one totals row
+    dataRows.pop(); // last pure-number row is always the day's totals
+    // Find the "FOODS" section marker, then walk meal headers + food name lines.
+    const foodsIdx=chunk.findIndex((l,li)=>li>i && /^foods$/i.test(l));
+    if(foodsIdx<0){ warnings.push(`Found macro data for ${date} but no "FOODS" section to name it — skipped.`); continue; }
+    let curMeal='Snacks';
+    const names=[]; let pending=null;
+    // A long food name can wrap across two extracted lines (e.g. "...Squares," / "Original, 1 bar").
+    // A finished name ends in its serving size (a number, optionally with a short unit); anything
+    // else is treated as incomplete and merged with the following line.
+    const looksComplete=s=>/\d+(\.\d+)?\s*[A-Za-z()%]*$/.test(s);
+    for(let j=foodsIdx+1; j<chunk.length && names.length<dataRows.length; j++){
+      const line=chunk[j];
+      if(/^(breakfast|lunch|dinner|snacks?)$/i.test(line)){
+        if(pending){ names.push(pending); pending=null; }
+        curMeal=normalizeImportMeal(line); continue;
+      }
+      if(/^totals?$/i.test(line)) continue;
+      const tokens=line.split(/\s+/);
+      if(tokens.length===columnOrder.length && tokens.every(isNumericToken)) break; // ran into another data table
+      if(pending) pending.name+=' '+line; else pending={ name:line, meal:curMeal };
+      if(looksComplete(pending.name)){ names.push(pending); pending=null; }
+    }
+    if(pending) names.push(pending);
+    if(names.length!==dataRows.length){
+      warnings.push(`${date}: found ${dataRows.length} macro rows but ${names.length} food names — matched what lined up.`);
+    }
+    const n=Math.min(names.length, dataRows.length);
+    for(let k=0;k<n;k++){
+      const vals={}; columnOrder.forEach((key,ci)=>{ vals[key]=dataRows[k][ci]; });
+      const micros={};
+      if(vals.sodium) micros.sodium=vals.sodium;
+      if(vals.sugar) micros.sugar=vals.sugar;
+      if(vals.fiber) micros.fiber=vals.fiber;
+      if(vals.cholesterol) micros.cholesterol=vals.cholesterol;
+      entries.push({
+        date, meal:names[k].meal, name:names[k].name,
+        calories:vals.calories||0, protein:vals.protein||0, carbs:vals.carbs||0, fat:vals.fat||0,
+        micros,
+      });
+    }
+  }
+  if(!entries.length) return null;
+  return { entries, warnings };
+}
 function parsePastedNumber(s){ const n=Number(String(s).replace(/,/g,'')); return isNaN(n)?0:n; }
 function parseMfpPastedDate(line){
   let m=line.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -2075,7 +2173,8 @@ function openImportMfpModal(){
     const text=$('#mfp-paste').value;
     const preview=$('#mfp-preview');
     if(!text.trim()){ preview.innerHTML='<div class="empty">Paste your report text above first.</div>'; return; }
-    const {entries, warnings}=parseMfpPastedText(text);
+    const structured=parseMfpDiaryStructuredText(text);
+    const {entries, warnings}=structured || parseMfpPastedText(text);
     parsedPaste=entries;
     if(!entries.length){
       preview.innerHTML='<div class="empty">Couldn\'t find any food entries in that text. Make sure you pasted the full report including the date headers and meal names.</div>';
