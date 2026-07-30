@@ -1042,12 +1042,26 @@
                             <div class="label">Protein</div>
                         </div>
                         <div class="stat-card">
-                            <div class="value">0</div>
+                            <div class="value" id="dash-steps">--</div>
                             <div class="label">Steps</div>
                         </div>
                         <div class="stat-card">
                             <div class="value">--</div>
                             <div class="label">Workout</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3 style="margin-bottom: var(--spacing-lg); color: var(--color-blue-light);">Apple Watch</h3>
+                    <div class="grid grid-2">
+                        <div class="stat-card">
+                            <div class="value" id="dash-active-energy">--</div>
+                            <div class="label">Active Cal</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="value" id="dash-last-workout" style="font-size: 1.15rem;">--</div>
+                            <div class="label">Last Workout</div>
                         </div>
                     </div>
                 </div>
@@ -1452,8 +1466,91 @@
 
             const isApplyingRemote = () => applyingRemote;
 
-            return { getSession, signUp, signIn, signOut, pull, push, applyRemoteState, isApplyingRemote };
+            return { client, getSession, signUp, signIn, signOut, pull, push, applyRemoteState, isApplyingRemote };
         })();
+
+        // MODULE: Health Sync — reads Apple Watch data (steps, active energy,
+        // workouts) that Health Auto Export pushes into Supabase via the
+        // health-webhook Edge Function. Read-only from the app's side.
+        const HealthSync = (() => {
+            const getTodayKey = () => new Date().toISOString().split('T')[0];
+
+            const getTodaySteps = async () => {
+                const session = await CloudSync.getSession();
+                if (!session) return null;
+                const { data, error } = await CloudSync.client
+                    .from('step_logs')
+                    .select('steps, goal')
+                    .eq('user_id', session.user.id)
+                    .eq('log_date', getTodayKey())
+                    .maybeSingle();
+                if (error) { console.error('Steps fetch failed:', error); return null; }
+                return data;
+            };
+
+            const getLatestActiveEnergy = async () => {
+                const session = await CloudSync.getSession();
+                if (!session) return null;
+                const { data, error } = await CloudSync.client
+                    .from('health_metrics')
+                    .select('qty, unit, recorded_at')
+                    .eq('user_id', session.user.id)
+                    .eq('metric_name', 'active_energy')
+                    .gte('recorded_at', getTodayKey())
+                    .order('recorded_at', { ascending: false })
+                    .limit(1);
+                if (error) { console.error('Active energy fetch failed:', error); return null; }
+                return data && data[0] ? data[0] : null;
+            };
+
+            const getLastWorkout = async () => {
+                const session = await CloudSync.getSession();
+                if (!session) return null;
+                const { data, error } = await CloudSync.client
+                    .from('health_workouts')
+                    .select('workout_type, start_time, duration_min')
+                    .eq('user_id', session.user.id)
+                    .order('start_time', { ascending: false })
+                    .limit(1);
+                if (error) { console.error('Workout fetch failed:', error); return null; }
+                return data && data[0] ? data[0] : null;
+            };
+
+            return { getTodaySteps, getLatestActiveEnergy, getLastWorkout };
+        })();
+
+        // UI: Pull latest Apple Watch data into the dashboard stat cards.
+        const renderHealthDashboard = async () => {
+            const stepsEl = document.getElementById('dash-steps');
+            const energyEl = document.getElementById('dash-active-energy');
+            const workoutEl = document.getElementById('dash-last-workout');
+            if (!stepsEl) return;
+
+            const session = await CloudSync.getSession();
+            if (!session) {
+                stepsEl.textContent = '--';
+                energyEl.textContent = '--';
+                workoutEl.textContent = 'Sign in to sync';
+                return;
+            }
+
+            const [steps, energy, workout] = await Promise.all([
+                HealthSync.getTodaySteps(),
+                HealthSync.getLatestActiveEnergy(),
+                HealthSync.getLastWorkout()
+            ]);
+
+            stepsEl.textContent = steps ? Number(steps.steps).toLocaleString() : '--';
+            energyEl.textContent = energy ? Math.round(energy.qty) : '--';
+            workoutEl.textContent = workout
+                ? `${workout.workout_type || 'Workout'}${workout.duration_min ? ' · ' + Math.round(workout.duration_min) + 'm' : ''}`
+                : 'None yet';
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderHealthDashboard();
+            setInterval(renderHealthDashboard, 5 * 60 * 1000);
+        });
 
         // Push to the cloud on every local state change, except when the
         // change came FROM a cloud pull (avoids a push/pull feedback loop).
@@ -1487,6 +1584,7 @@
                     CloudSync.push(localState);
                 }
                 hide();
+                renderHealthDashboard();
             };
 
             const init = async () => {
