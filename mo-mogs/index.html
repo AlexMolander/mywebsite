@@ -1083,9 +1083,19 @@
                     <h2>Nutrition</h2>
                 </div>
 
+                <!-- Date Navigation (browse past logged/imported days) -->
+                <div class="panel flex-between">
+                    <button id="nutrition-prev-day" class="btn btn-secondary btn-small">‹ Prev</button>
+                    <div style="text-align: center;">
+                        <div id="nutrition-view-date-label" style="font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.9rem;">Today</div>
+                        <input type="date" id="nutrition-date-picker" style="margin-top: 4px; padding: 4px 8px; min-height: 32px; font-size: 0.85rem;">
+                    </div>
+                    <button id="nutrition-next-day" class="btn btn-secondary btn-small">Next ›</button>
+                </div>
+
                 <!-- Macro Overview -->
                 <div class="panel">
-                    <h3 style="margin-bottom: var(--spacing-lg); text-align: center;">Today's Macros</h3>
+                    <h3 id="macros-heading" style="margin-bottom: var(--spacing-lg); text-align: center;">Today's Macros</h3>
                     <div class="macro-ring-container">
                         <canvas class="macro-ring"></canvas>
                         <div class="macro-info">
@@ -1181,9 +1191,9 @@
                     </div>
                 </div>
 
-                <!-- Today's Meals -->
+                <!-- Meals for the selected date -->
                 <div class="panel">
-                    <h3 style="margin-bottom: var(--spacing-lg);">Today's Meals</h3>
+                    <h3 id="meals-heading" style="margin-bottom: var(--spacing-lg);">Today's Meals</h3>
                     <div id="meals-list">
                         <p class="text-muted">No meals logged yet. Scan a barcode or add food.</p>
                     </div>
@@ -1237,6 +1247,16 @@
                 </div>
             </section>
 
+            <!-- CLAUDE LOG SECTION -->
+            <section id="claude-log" class="section">
+                <div class="section-header">
+                    <h2>Claude Log</h2>
+                </div>
+                <div id="claude-log-list">
+                    <p class="text-muted">Loading…</p>
+                </div>
+            </section>
+
             <!-- SETTINGS SECTION -->
             <section id="settings" class="section">
                 <div class="section-header">
@@ -1269,6 +1289,9 @@
             </button>
             <button class="nav-item" data-section="journal">
                 <div>Journal</div>
+            </button>
+            <button class="nav-item" data-section="claude-log">
+                <div>Claude</div>
             </button>
             <button class="nav-item" data-section="settings">
                 <div>Settings</div>
@@ -1574,6 +1597,55 @@
             setInterval(renderHealthDashboard, 5 * 60 * 1000);
         });
 
+        // MODULE: Claude Log — a running changelog of what's been built/is in
+        // progress, written to a public-read Supabase table whenever something
+        // ships. Not a chat; just a status feed.
+        const ClaudeLog = (() => {
+            const fetchEntries = async () => {
+                const { data, error } = await CloudSync.client
+                    .from('claude_log')
+                    .select('title, description, status, created_at')
+                    .order('created_at', { ascending: false })
+                    .limit(30);
+                if (error) { console.error('Claude log fetch failed:', error); return []; }
+                return data || [];
+            };
+            return { fetchEntries };
+        })();
+
+        const escapeHtmlGlobal = (str) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        const renderClaudeLog = async () => {
+            const listEl = document.getElementById('claude-log-list');
+            if (!listEl) return;
+            listEl.innerHTML = '<p class="text-muted">Loading…</p>';
+            const entries = await ClaudeLog.fetchEntries();
+            if (!entries.length) {
+                listEl.innerHTML = '<p class="text-muted">Nothing logged yet.</p>';
+                return;
+            }
+            listEl.innerHTML = entries.map(e => `
+                <div class="panel" style="margin-bottom: var(--spacing-md); ${e.status === 'in_progress' ? 'opacity: 0.7;' : ''}">
+                    <div class="flex-between" style="margin-bottom: var(--spacing-xs);">
+                        <h3 style="margin-bottom: 0;">${escapeHtmlGlobal(e.title)}</h3>
+                        <span class="text-muted" style="font-size: 0.75rem; white-space: nowrap; margin-left: var(--spacing-md);">
+                            ${e.status === 'in_progress' ? 'In progress' : new Date(e.created_at).toLocaleDateString()}
+                        </span>
+                    </div>
+                    <p class="text-muted" style="margin-bottom: 0;">${escapeHtmlGlobal(e.description)}</p>
+                </div>
+            `).join('');
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderClaudeLog();
+            document.querySelectorAll('.nav-item').forEach(item => {
+                if (item.dataset.section === 'claude-log') {
+                    item.addEventListener('click', renderClaudeLog);
+                }
+            });
+        });
+
         // Push to the cloud on every local state change, except when the
         // change came FROM a cloud pull (avoids a push/pull feedback loop).
         document.addEventListener('state-updated', (e) => {
@@ -1670,6 +1742,44 @@
         // MODULE: Nutrition Manager
         const NutritionManager = (() => {
             const getTodayKey = () => new Date().toISOString().split('T')[0];
+
+            // Which date the Nutrition tab is currently browsing — defaults to
+            // today, changeable via the prev/next buttons or date picker so
+            // past logged/imported days can be reviewed, not just today.
+            let viewDate = getTodayKey();
+            const getViewDate = () => viewDate;
+            const setViewDate = (date) => { viewDate = date; };
+
+            const getTotalsForDate = (date) => {
+                const state = EventBus.getState();
+                return state.nutrition.daily[date]?.totals || { calories: 0, protein: 0, carbs: 0, fats: 0 };
+            };
+
+            const getMealsForDate = (date) => {
+                const state = EventBus.getState();
+                return state.nutrition.daily[date]?.meals || [];
+            };
+
+            const recalcTotalsForDate = (state, date) => {
+                const meals = state.nutrition.daily[date]?.meals || [];
+                const totals = { calories: 0, protein: 0, carbs: 0, fats: 0 };
+                meals.forEach(m => {
+                    totals.calories += m.calories;
+                    totals.protein += m.protein;
+                    totals.carbs += m.carbs;
+                    totals.fats += m.fats;
+                });
+                if (state.nutrition.daily[date]) state.nutrition.daily[date].totals = totals;
+            };
+
+            const deleteMealForDate = (date, mealId) => {
+                const state = EventBus.getState();
+                if (state.nutrition.daily[date]) {
+                    state.nutrition.daily[date].meals = state.nutrition.daily[date].meals.filter(m => m.id !== mealId);
+                    recalcTotalsForDate(state, date);
+                    EventBus.setState(state);
+                }
+            };
 
             const addMeal = (foodName, calories, protein, carbs, fats, quantity) => {
                 const state = EventBus.getState();
@@ -1795,7 +1905,10 @@
                 return { added, touchedDates: [...touchedDates] };
             };
 
-            return { addMeal, getTodayTotals, getTodayMeals, deleteMeal, getTodayKey, importEntries };
+            return {
+                addMeal, getTodayTotals, getTodayMeals, deleteMeal, getTodayKey, importEntries,
+                getViewDate, setViewDate, getTotalsForDate, getMealsForDate, deleteMealForDate
+            };
         })();
 
         // MODULE: Food Search (Open Food Facts API)
@@ -2161,10 +2274,27 @@
             return { init, update };
         })();
 
-        // UI: Update nutrition display
+        // UI: Update nutrition display for whichever date is currently being
+        // browsed (defaults to today; see the prev/next/date-picker controls).
         const updateNutritionDisplay = () => {
-            const totals = NutritionManager.getTodayTotals();
-            const meals = NutritionManager.getTodayMeals();
+            const viewDate = NutritionManager.getViewDate();
+            const todayKey = NutritionManager.getTodayKey();
+            const isToday = viewDate === todayKey;
+
+            const totals = NutritionManager.getTotalsForDate(viewDate);
+            const meals = NutritionManager.getMealsForDate(viewDate);
+
+            // Date nav label + picker + next-button bound at today
+            const dateObj = new Date(viewDate + 'T00:00:00');
+            const label = isToday
+                ? 'Today'
+                : dateObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            document.getElementById('nutrition-view-date-label').textContent = label;
+            document.getElementById('nutrition-date-picker').value = viewDate;
+            document.getElementById('nutrition-next-day').disabled = isToday;
+
+            document.getElementById('macros-heading').textContent = isToday ? "Today's Macros" : `Macros — ${label}`;
+            document.getElementById('meals-heading').textContent = isToday ? "Today's Meals" : `Meals — ${label}`;
 
             // Update totals
             document.getElementById('total-calories').textContent = Math.round(totals.calories);
@@ -2178,7 +2308,9 @@
             // Update meals list
             const mealsList = document.getElementById('meals-list');
             if (meals.length === 0) {
-                mealsList.innerHTML = '<p class="text-muted">No meals logged yet. Scan a barcode or add food.</p>';
+                mealsList.innerHTML = isToday
+                    ? '<p class="text-muted">No meals logged yet. Scan a barcode or add food.</p>'
+                    : '<p class="text-muted">No meals logged for this day.</p>';
             } else {
                 mealsList.innerHTML = meals.map(meal => `
                     <div class="meal-item">
@@ -2193,8 +2325,8 @@
                 // Add delete event listeners
                 document.querySelectorAll('.meal-item-delete').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        const mealId = parseInt(btn.dataset.mealId);
-                        NutritionManager.deleteMeal(mealId);
+                        const mealId = parseFloat(btn.dataset.mealId);
+                        NutritionManager.deleteMealForDate(viewDate, mealId);
                         updateNutritionDisplay();
                     });
                 });
@@ -2221,6 +2353,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             MacroChart.init();
             BarcodeScanner.init();
+            document.getElementById('nutrition-date-picker').max = NutritionManager.getTodayKey();
             updateNutritionDisplay();
 
             // Tab switching
@@ -2241,6 +2374,33 @@
             // Barcode scanner
             document.getElementById('start-scanner').addEventListener('click', () => BarcodeScanner.start());
             document.getElementById('stop-scanner').addEventListener('click', () => BarcodeScanner.stop());
+
+            // Date navigation — browse past logged/imported nutrition days
+            const addDaysToKey = (dateKey, delta) => {
+                const d = new Date(dateKey + 'T00:00:00');
+                d.setDate(d.getDate() + delta);
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            };
+
+            document.getElementById('nutrition-prev-day').addEventListener('click', () => {
+                NutritionManager.setViewDate(addDaysToKey(NutritionManager.getViewDate(), -1));
+                updateNutritionDisplay();
+            });
+            document.getElementById('nutrition-next-day').addEventListener('click', () => {
+                const next = addDaysToKey(NutritionManager.getViewDate(), 1);
+                if (next > NutritionManager.getTodayKey()) return;
+                NutritionManager.setViewDate(next);
+                updateNutritionDisplay();
+            });
+            document.getElementById('nutrition-date-picker').addEventListener('change', (e) => {
+                if (!e.target.value) return;
+                const clamped = e.target.value > NutritionManager.getTodayKey() ? NutritionManager.getTodayKey() : e.target.value;
+                NutritionManager.setViewDate(clamped);
+                updateNutritionDisplay();
+            });
 
             // Food search
             let searchTimeout;
@@ -2644,10 +2804,27 @@
                 EventBus.setState(state);
             };
 
+            // Progressive-overload history for one exercise — max weight and total
+            // volume (weight x reps summed across sets) per session, oldest first.
+            const getVolumeHistory = (exerciseName) => {
+                const state = EventBus.getState();
+                const sessions = (state.workouts.sessions || [])
+                    .filter(s => s.exercises && s.exercises[exerciseName] && s.exercises[exerciseName].some(Boolean))
+                    .slice()
+                    .sort((a, b) => a.date.localeCompare(b.date));
+
+                return sessions.map(s => {
+                    const sets = s.exercises[exerciseName].filter(Boolean);
+                    const maxWeight = sets.reduce((max, st) => Math.max(max, st.weight || 0), 0);
+                    const totalVolume = sets.reduce((sum, st) => sum + (st.weight || 0) * (st.reps || 0), 0);
+                    return { date: s.date, maxWeight, totalVolume };
+                });
+            };
+
             return {
                 addOrUpdateSet, getTodaySets, getLastSession, getPRForExercise, isNewPR,
                 getActiveExercise, setSubstitution, getTodayKey, deleteTodaySet,
-                getDisplayOrder, moveExercise
+                getDisplayOrder, moveExercise, getVolumeHistory
             };
         })();
 
@@ -2712,6 +2889,8 @@
                     <div class="sets-list">
                         ${rows.join('')}
                     </div>
+                    <button class="btn btn-secondary btn-small progress-toggle-btn" style="width: 100%; margin-top: var(--spacing-sm);">Progress</button>
+                    <div class="progress-chart-wrap hidden" style="margin-top: var(--spacing-sm);"></div>
                 `;
 
                 // Reorder for today only
@@ -2751,6 +2930,48 @@
                     row.querySelector('.set-delete-btn').addEventListener('click', () => {
                         WorkoutManager.deleteTodaySet(dayNum, activeExercise, setIndex);
                         renderWorkout(dayNum);
+                    });
+                });
+
+                // Progressive overload chart — lazily rendered on first toggle,
+                // showing max weight per session so trend direction is visible.
+                card.querySelector('.progress-toggle-btn').addEventListener('click', () => {
+                    const wrap = card.querySelector('.progress-chart-wrap');
+                    const wasHidden = wrap.classList.contains('hidden');
+                    wrap.classList.toggle('hidden');
+                    if (!wasHidden) return;
+
+                    const history = WorkoutManager.getVolumeHistory(activeExercise);
+                    if (history.length < 2) {
+                        wrap.innerHTML = '<p class="text-muted" style="font-size: 0.8rem;">Log this exercise across a few more sessions to see a trend.</p>';
+                        return;
+                    }
+                    wrap.innerHTML = '';
+                    const canvas = document.createElement('canvas');
+                    canvas.height = 120;
+                    wrap.appendChild(canvas);
+                    new Chart(canvas, {
+                        type: 'line',
+                        data: {
+                            labels: history.map(h => h.date.slice(5)),
+                            datasets: [{
+                                label: 'Max weight (lbs)',
+                                data: history.map(h => h.maxWeight),
+                                borderColor: '#d4b06a',
+                                backgroundColor: 'rgba(212, 176, 106, 0.15)',
+                                tension: 0.3,
+                                fill: true,
+                                pointRadius: 3
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false }, tooltip: { enabled: true } },
+                            scales: {
+                                x: { ticks: { color: '#8a8a8a', font: { size: 10 } }, grid: { color: '#262626' } },
+                                y: { ticks: { color: '#8a8a8a', font: { size: 10 } }, grid: { color: '#262626' }, beginAtZero: false }
+                            }
+                        }
                     });
                 });
 
