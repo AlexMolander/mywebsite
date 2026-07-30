@@ -1252,6 +1252,16 @@
                 <div class="section-header">
                     <h2>Claude Log</h2>
                 </div>
+
+                <div class="panel">
+                    <h3 style="margin-bottom: var(--spacing-sm); color: var(--color-blue-light);">Your Snapshot</h3>
+                    <p class="text-muted" style="margin-bottom: var(--spacing-md);">
+                        Copy this and paste it into a Claude chat — training questions, nutrition, accountability, whatever you need. It knows your real data because you just gave it to it.
+                    </p>
+                    <pre id="coach-summary-text" class="text-mono" style="white-space: pre-wrap; background: var(--color-dark-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--spacing-md); font-size: 0.8rem; max-height: 320px; overflow-y: auto; margin-bottom: var(--spacing-md);">Generating…</pre>
+                    <button id="coach-copy-btn" class="btn" style="width: 100%;">Copy Summary</button>
+                </div>
+
                 <div id="claude-log-list">
                     <p class="text-muted">Loading…</p>
                 </div>
@@ -1637,11 +1647,110 @@
             `).join('');
         };
 
+        // Builds a plain-text snapshot of real training/nutrition/Watch data —
+        // meant to be copy-pasted into a Claude chat so it has real context
+        // instead of guessing. Not a live agent; just gets the facts across.
+        const generateCoachSummary = async () => {
+            const state = EventBus.getState();
+            const lines = [];
+            const today = new Date();
+            lines.push(`Mo Mogs snapshot — ${today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`);
+            lines.push('');
+
+            lines.push('RECENT WORKOUTS');
+            const sessions = (state.workouts.sessions || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
+            if (!sessions.length) {
+                lines.push('No workouts logged yet.');
+            } else {
+                sessions.forEach(s => {
+                    const dayName = (WORKOUT_SPLIT[s.day] && WORKOUT_SPLIT[s.day].name) || `Day ${s.day}`;
+                    lines.push(`${s.date} — ${dayName}`);
+                    Object.entries(s.exercises || {}).forEach(([name, sets]) => {
+                        const validSets = (sets || []).filter(Boolean);
+                        if (!validSets.length) return;
+                        const setStr = validSets.map(st => `${st.reps ?? '-'}x${st.weight ?? '-'}lbs${st.dropWeight ? ' -> ' + st.dropWeight + 'lbs' : ''}`).join(', ');
+                        lines.push(`  ${name}: ${setStr}`);
+                    });
+                });
+            }
+            lines.push('');
+
+            lines.push('RECENT NUTRITION');
+            const nutritionDates = Object.keys(state.nutrition.daily || {}).sort().reverse().slice(0, 3);
+            if (!nutritionDates.length) {
+                lines.push('No meals logged yet.');
+            } else {
+                nutritionDates.forEach(date => {
+                    const day = state.nutrition.daily[date];
+                    const t = day.totals || {};
+                    lines.push(`${date}: ${Math.round(t.calories || 0)} cal | P ${Math.round(t.protein || 0)}g C ${Math.round(t.carbs || 0)}g F ${Math.round(t.fats || 0)}g (${(day.meals || []).length} items)`);
+                });
+            }
+            lines.push('');
+
+            lines.push('APPLE WATCH (TODAY)');
+            try {
+                const session = await CloudSync.getSession();
+                if (session) {
+                    const [steps, energy, workout] = await Promise.all([
+                        HealthSync.getTodaySteps(), HealthSync.getLatestActiveEnergy(), HealthSync.getLastWorkout()
+                    ]);
+                    lines.push(`Steps: ${steps ? Number(steps.steps).toLocaleString() : '--'}`);
+                    lines.push(`Active calories: ${energy ? Math.round(energy.qty) : '--'}`);
+                    lines.push(`Last workout: ${workout ? (workout.workout_type || 'Workout') + (workout.duration_min ? ' (' + Math.round(workout.duration_min) + 'm)' : '') : 'None yet'}`);
+                } else {
+                    lines.push('Not signed in — Apple Watch data unavailable.');
+                }
+            } catch (e) {
+                lines.push('Apple Watch data unavailable.');
+            }
+            lines.push('');
+
+            let streak = 0;
+            for (let i = 0; i < 60; i++) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const key = d.toISOString().split('T')[0];
+                const hasWorkout = (state.workouts.sessions || []).some(s => s.date === key);
+                const hasNutrition = !!state.nutrition.daily[key];
+                if (hasWorkout || hasNutrition) streak++; else break;
+            }
+            lines.push(`CONSISTENCY: ${streak}-day streak of logging something (workout or food)`);
+
+            return lines.join('\n');
+        };
+
+        const renderCoachSummary = async () => {
+            const el = document.getElementById('coach-summary-text');
+            if (!el) return;
+            el.textContent = 'Generating…';
+            el.textContent = await generateCoachSummary();
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            renderCoachSummary();
+            document.getElementById('coach-copy-btn').addEventListener('click', async () => {
+                const btn = document.getElementById('coach-copy-btn');
+                try {
+                    await navigator.clipboard.writeText(document.getElementById('coach-summary-text').textContent);
+                    const original = btn.textContent;
+                    btn.textContent = 'Copied';
+                    setTimeout(() => { btn.textContent = original; }, 1500);
+                } catch (e) {
+                    console.error('Copy failed:', e);
+                    btn.textContent = 'Copy failed — select text manually';
+                }
+            });
+        });
+
         document.addEventListener('DOMContentLoaded', () => {
             renderClaudeLog();
             document.querySelectorAll('.nav-item').forEach(item => {
                 if (item.dataset.section === 'claude-log') {
-                    item.addEventListener('click', renderClaudeLog);
+                    item.addEventListener('click', () => {
+                        renderClaudeLog();
+                        renderCoachSummary();
+                    });
                 }
             });
         });
