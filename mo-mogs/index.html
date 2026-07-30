@@ -18,6 +18,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 
     <style>
         /* ============================================
@@ -1113,6 +1115,7 @@
                         <button class="nutrition-tab-btn active" data-tab="scanner">Scan</button>
                         <button class="nutrition-tab-btn" data-tab="search">Search</button>
                         <button class="nutrition-tab-btn" data-tab="manual">Manual</button>
+                        <button class="nutrition-tab-btn" data-tab="import">Import</button>
                     </div>
 
                     <!-- Scanner Tab -->
@@ -1146,6 +1149,25 @@
                             <input type="number" id="manual-fats" placeholder="Fats (g)" min="0">
                         </div>
                         <button id="add-manual-food" class="btn" style="width: 100%;">Add Food</button>
+                    </div>
+
+                    <!-- Import Tab (MyFitnessPal free-tier: PDF or pasted report text) -->
+                    <div id="import-tab" class="nutrition-tab-content hidden">
+                        <p class="text-muted" style="margin-bottom: var(--spacing-md);">
+                            In MyFitnessPal on the web: Food tab → scroll down → View Full Report (Printable), pick a date range.
+                            Save/print that page as a PDF and upload it below, or copy the page text and paste it in.
+                        </p>
+                        <div style="margin-bottom: var(--spacing-md);">
+                            <label class="text-muted" style="display:block;margin-bottom:var(--spacing-xs);">Upload Report PDF</label>
+                            <input type="file" id="mfp-pdf-input" accept=".pdf,application/pdf" style="width: 100%;">
+                        </div>
+                        <p id="mfp-pdf-status" class="text-muted hidden" style="margin-bottom: var(--spacing-md);"></p>
+                        <div style="margin-bottom: var(--spacing-md);">
+                            <label class="text-muted" style="display:block;margin-bottom:var(--spacing-xs);">...or paste report text</label>
+                            <textarea id="mfp-paste-input" rows="6" placeholder="Paste your MyFitnessPal report text here…" style="width: 100%;"></textarea>
+                        </div>
+                        <button id="mfp-parse-btn" class="btn btn-secondary" style="width: 100%;">Parse Text</button>
+                        <div id="mfp-preview" style="margin-top: var(--spacing-md);"></div>
                     </div>
 
                     <!-- Food to Add (hidden until selected) -->
@@ -1723,7 +1745,57 @@
                 }
             };
 
-            return { addMeal, getTodayTotals, getTodayMeals, deleteMeal, getTodayKey };
+            // Bulk-import entries (from MyFitnessPal) that may land on past dates,
+            // not just today. Recomputes totals once per affected date and saves
+            // a single state update instead of one per entry.
+            const importEntries = (entries) => {
+                const state = EventBus.getState();
+                let added = 0;
+                const touchedDates = new Set();
+
+                entries.forEach(e => {
+                    const date = e.date;
+                    if (!date) return;
+                    if (!state.nutrition.daily[date]) {
+                        state.nutrition.daily[date] = { meals: [], totals: { calories: 0, protein: 0, carbs: 0, fats: 0 } };
+                    }
+                    const dup = state.nutrition.daily[date].meals.some(m =>
+                        m.name === e.name && Math.round(m.calories) === Math.round(e.calories || 0)
+                    );
+                    if (dup) return;
+
+                    state.nutrition.daily[date].meals.push({
+                        id: Date.now() + Math.random(),
+                        name: e.name,
+                        meal: e.meal || 'Snacks',
+                        quantity: 100,
+                        calories: e.calories || 0,
+                        protein: e.protein || 0,
+                        carbs: e.carbs || 0,
+                        fats: e.fat || 0,
+                        timestamp: new Date().toISOString(),
+                        source: 'mfp-import'
+                    });
+                    added++;
+                    touchedDates.add(date);
+                });
+
+                touchedDates.forEach(date => {
+                    const totals = { calories: 0, protein: 0, carbs: 0, fats: 0 };
+                    state.nutrition.daily[date].meals.forEach(m => {
+                        totals.calories += m.calories;
+                        totals.protein += m.protein;
+                        totals.carbs += m.carbs;
+                        totals.fats += m.fats;
+                    });
+                    state.nutrition.daily[date].totals = totals;
+                });
+
+                EventBus.setState(state);
+                return { added, touchedDates: [...touchedDates] };
+            };
+
+            return { addMeal, getTodayTotals, getTodayMeals, deleteMeal, getTodayKey, importEntries };
         })();
 
         // MODULE: Food Search (Open Food Facts API)
@@ -1755,6 +1827,223 @@
             };
 
             return { searchAPI, parseNutrients };
+        })();
+
+        // MODULE: MyFitnessPal free-tier import — parses either a PDF (via pdf.js
+        // text extraction) or pasted text from MFP's "Printable Diary" report.
+        // Recovered/ported from an earlier version of this app that supported
+        // free-tier (no CSV export) import; adapted to the current data model.
+        const MFPImport = (() => {
+            const MFP_METRIC_WORDS = ['calories', 'carbs', 'carbohydrate', 'carbohydrates', 'fat', 'protein', 'sodium', 'sugar', 'sugars', 'cholest', 'cholesterol', 'fiber', 'fibre'];
+
+            const escapeHtml = (str) => String(str)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            const formatDateKey = (d) => {
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            };
+
+            const normalizeImportMeal = (raw) => {
+                const m = (raw || '').toLowerCase();
+                if (m.includes('breakfast')) return 'Breakfast';
+                if (m.includes('lunch')) return 'Lunch';
+                if (m.includes('dinner')) return 'Dinner';
+                return 'Snacks';
+            };
+
+            const mfpCanonicalMetric = (word) => {
+                const w = word.toLowerCase();
+                if (w.startsWith('calor')) return 'calories';
+                if (w.startsWith('carb')) return 'carbs';
+                if (w === 'fat') return 'fat';
+                if (w.startsWith('protein')) return 'protein';
+                if (w.startsWith('cholest')) return 'cholesterol';
+                if (w.startsWith('sodium')) return 'sodium';
+                if (w.startsWith('sugar')) return 'sugar';
+                if (w.startsWith('fib')) return 'fiber';
+                return null;
+            };
+
+            const isNumericToken = (tok) => tok === '--' || tok === '-' || /^-?[\d,]+(\.\d+)?(g|mg|mcg|kcal)?$/i.test(tok);
+
+            const tokenToNumber = (tok) => {
+                if (tok === '--' || tok === '-') return 0;
+                const n = Number(String(tok).replace(/[^0-9.\-]/g, ''));
+                return isNaN(n) ? 0 : n;
+            };
+
+            const parsePastedNumber = (s) => {
+                const n = Number(String(s).replace(/,/g, ''));
+                return isNaN(n) ? 0 : n;
+            };
+
+            const parseMfpPastedDate = (line) => {
+                let m = line.match(/(\d{4})-(\d{2})-(\d{2})/);
+                if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+                m = line.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+                if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+                const cleaned = line.replace(/^\s*\w+day,?\s*/i, '').trim();
+                const d = new Date(cleaned);
+                if (!isNaN(d.getTime()) && /[A-Za-z]+\s+\d{1,2},?\s+\d{4}/.test(cleaned)) return formatDateKey(d);
+                return null;
+            };
+
+            // MyFitnessPal's "Printable Diary" PDF export renders the nutrition table's
+            // numeric columns and food-name column as separate text blocks (a PDF
+            // text-extraction-order quirk) — detect and parse that structure directly.
+            const parseMfpDiaryStructuredText = (text) => {
+                text = text.replace(/(\d)\s+(g|mg|mcg|kcal)\b/gi, '$1$2')
+                    .replace(/(\w)\s+'\s+(\w)/g, "$1'$2")
+                    .replace(/\(\s*([^()]*?)\s*\)/g, '($1)');
+                const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+                const dateLineIdxs = [];
+                lines.forEach((l, i) => { if (parseMfpPastedDate(l)) dateLineIdxs.push(i); });
+                if (!dateLineIdxs.length) return null;
+
+                const entries = [];
+                const warnings = [];
+                for (let d = 0; d < dateLineIdxs.length; d++) {
+                    const start = dateLineIdxs[d];
+                    const end = d + 1 < dateLineIdxs.length ? dateLineIdxs[d + 1] : lines.length;
+                    const chunk = lines.slice(start, end);
+                    const date = parseMfpPastedDate(chunk[0]);
+                    const headerIdx = chunk.findIndex(l => {
+                        const words = l.split(/\s+/);
+                        const metricHits = words.filter(w => mfpCanonicalMetric(w));
+                        return metricHits.length >= 3 && !/\d/.test(l);
+                    });
+                    if (headerIdx < 0 || !date) continue;
+
+                    const columnOrder = chunk[headerIdx].split(/\s+/).map(mfpCanonicalMetric).filter(Boolean);
+                    let foodsIdx = chunk.findIndex((l, li) => li > headerIdx && /^foods\b/i.test(l));
+                    if (foodsIdx < 0) foodsIdx = chunk.length;
+
+                    const tokenStream = chunk.slice(headerIdx + 1, foodsIdx).flatMap(l => l.split(/\s+/)).filter(Boolean);
+                    const numericRun = [];
+                    for (const tok of tokenStream) { if (!isNumericToken(tok)) break; numericRun.push(tok); }
+
+                    const dataRows = [];
+                    for (let p = 0; p + columnOrder.length <= numericRun.length; p += columnOrder.length) {
+                        dataRows.push(numericRun.slice(p, p + columnOrder.length).map(tokenToNumber));
+                    }
+                    if (dataRows.length < 2) continue;
+                    dataRows.pop(); // last pure-number row is always the day's totals
+                    if (foodsIdx >= chunk.length) { warnings.push(`Found macro data for ${date} but no "FOODS" section to name it — skipped.`); continue; }
+
+                    let curMeal = 'Snacks';
+                    const names = [];
+                    let pending = null;
+                    const looksComplete = s => /\d+(\.\d+)?[\sA-Za-z()%]*$/.test(s);
+                    for (let j = foodsIdx + 1; j < chunk.length && names.length < dataRows.length; j++) {
+                        const line = chunk[j];
+                        if (/^(breakfast|lunch|dinner|snacks?)\b/i.test(line) && line.length < 20) {
+                            if (pending) { names.push(pending); pending = null; }
+                            curMeal = normalizeImportMeal(line); continue;
+                        }
+                        if (/^totals?$/i.test(line)) continue;
+                        const tokens = line.split(/\s+/);
+                        if (tokens.length === columnOrder.length && tokens.every(isNumericToken)) break;
+                        if (pending) pending.name += ' ' + line; else pending = { name: line, meal: curMeal };
+                        if (looksComplete(pending.name)) { names.push(pending); pending = null; }
+                    }
+                    if (pending) names.push(pending);
+                    if (names.length !== dataRows.length) {
+                        warnings.push(`${date}: found ${dataRows.length} macro rows but ${names.length} food names — matched what lined up.`);
+                    }
+
+                    const n = Math.min(names.length, dataRows.length);
+                    for (let k = 0; k < n; k++) {
+                        const vals = {};
+                        columnOrder.forEach((key, ci) => { vals[key] = dataRows[k][ci]; });
+                        entries.push({
+                            date, meal: names[k].meal, name: names[k].name.replace(/\s+/g, ' ').replace(/ ,/g, ',').trim(),
+                            calories: vals.calories || 0, protein: vals.protein || 0, carbs: vals.carbs || 0, fat: vals.fat || 0
+                        });
+                    }
+                }
+                if (!entries.length) return null;
+                return { entries, warnings };
+            };
+
+            // Looser fallback for pasted text where structure isn't as clean.
+            const parseMfpPastedText = (text) => {
+                const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+                let columnOrder = ['calories', 'carbs', 'fat', 'protein', 'sodium', 'sugar'];
+                const headerLine = lines.find(l => {
+                    const low = l.toLowerCase();
+                    const hits = MFP_METRIC_WORDS.filter(w => low.includes(w));
+                    return hits.length >= 3 && !/\d/.test(l);
+                });
+                if (headerLine) {
+                    const found = [];
+                    const low = headerLine.toLowerCase();
+                    const idxs = MFP_METRIC_WORDS.map(w => ({ w, i: low.indexOf(w) })).filter(x => x.i >= 0).sort((a, b) => a.i - b.i);
+                    idxs.forEach(x => {
+                        const key = x.w.startsWith('carb') ? 'carbs' : x.w.startsWith('sugar') ? 'sugar' : x.w;
+                        if (!found.includes(key)) found.push(key);
+                    });
+                    if (found.length >= 2) columnOrder = found;
+                }
+
+                let curDate = null, curMeal = 'Snacks';
+                const entries = [];
+                const warnings = [];
+                for (const line of lines) {
+                    const maybeDate = parseMfpPastedDate(line);
+                    if (maybeDate) { curDate = maybeDate; continue; }
+                    const mealMatch = line.match(/^(Breakfast|Lunch|Dinner|Snacks?)\b/i);
+                    if (mealMatch && line.length < 40) { curMeal = normalizeImportMeal(mealMatch[1]); continue; }
+                    if (/^(totals?|daily goal|remaining|your daily goal|calories remaining|sub[-\s]?total)\b/i.test(line)) continue;
+
+                    const numMatches = [...line.matchAll(/-?\d[\d,]*\.?\d*/g)];
+                    if (!numMatches.length) continue;
+                    const dataMatches = numMatches.slice(-columnOrder.length);
+                    const nameCutPos = dataMatches[0].index;
+                    let name = line.slice(0, nameCutPos).trim().replace(/[-–—,:\s]+$/, '');
+                    if (!name) continue;
+                    if (MFP_METRIC_WORDS.some(w => name.toLowerCase() === w)) continue;
+                    if (/totals?$/i.test(name)) continue;
+                    if (!curDate) { warnings.push(`Skipped "${name}" — no date found above it.`); continue; }
+
+                    const vals = {};
+                    columnOrder.forEach((key, i) => { if (dataMatches[i] != null) vals[key] = parsePastedNumber(dataMatches[i][0]); });
+                    entries.push({
+                        date: curDate, meal: curMeal, name,
+                        calories: vals.calories || 0, protein: vals.protein || 0, carbs: vals.carbs || 0, fat: vals.fat || 0
+                    });
+                }
+                return { entries, warnings };
+            };
+
+            const parse = (text) => {
+                const structured = parseMfpDiaryStructuredText(text);
+                return structured || parseMfpPastedText(text);
+            };
+
+            const extractPdfText = async (file) => {
+                if (!window.pdfjsLib) throw new Error('PDF library failed to load — check your connection, or paste the text instead.');
+                const buf = await file.arrayBuffer();
+                const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('Timed out reading the PDF — please use "paste report text" instead.')), 12000));
+                const pdf = await Promise.race([pdfjsLib.getDocument({ data: buf }).promise, timeout]);
+                let text = '';
+                for (let p = 1; p <= pdf.numPages; p++) {
+                    const page = await pdf.getPage(p);
+                    const content = await page.getTextContent();
+                    let lastY = null;
+                    content.items.forEach(item => {
+                        if (lastY !== null && item.transform && Math.abs(item.transform[5] - lastY) > 2 && !/\s$/.test(text)) text += '\n';
+                        text += item.str;
+                        text += item.hasEOL ? '\n' : ' ';
+                        if (item.transform) lastY = item.transform[5];
+                    });
+                }
+                return text.trim();
+            };
+
+            return { parse, extractPdfText, escapeHtml };
         })();
 
         // MODULE: Barcode Scanner
@@ -2041,6 +2330,63 @@
 
             // Listen for state updates
             document.addEventListener('state-updated', updateNutritionDisplay);
+
+            // MyFitnessPal import: PDF upload extracts text into the paste box;
+            // Parse renders a preview; Import commits entries into state.
+            let mfpParsedEntries = null;
+
+            document.getElementById('mfp-pdf-input').addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const statusEl = document.getElementById('mfp-pdf-status');
+                statusEl.classList.remove('hidden');
+                statusEl.textContent = 'Reading PDF…';
+                try {
+                    const text = await MFPImport.extractPdfText(file);
+                    document.getElementById('mfp-paste-input').value = text;
+                    statusEl.textContent = 'Extracted text from the PDF — click "Parse Text" below to review.';
+                } catch (err) {
+                    statusEl.textContent = 'Could not read that PDF: ' + (err.message || err);
+                }
+            });
+
+            document.getElementById('mfp-parse-btn').addEventListener('click', () => {
+                const text = document.getElementById('mfp-paste-input').value;
+                const preview = document.getElementById('mfp-preview');
+                if (!text.trim()) {
+                    preview.innerHTML = '<p class="text-muted">Paste your report text above first.</p>';
+                    return;
+                }
+                const { entries, warnings } = MFPImport.parse(text);
+                mfpParsedEntries = entries;
+                if (!entries.length) {
+                    preview.innerHTML = '<p class="text-muted">Couldn\'t find any food entries in that text. Make sure you pasted the full report including date headers and meal names.</p>';
+                    return;
+                }
+                const dates = new Set(entries.map(e => e.date));
+                preview.innerHTML = `
+                    <p class="text-muted" style="margin-bottom: var(--spacing-md);">
+                        Parsed <b>${entries.length}</b> entries across <b>${dates.size}</b> day${dates.size === 1 ? '' : 's'}.
+                        ${warnings && warnings.length ? `<br>${warnings.length} line(s) skipped — check they weren't real food entries.` : ''}
+                    </p>
+                    <div class="food-search-results" style="max-height: 220px;">
+                        ${entries.map(en => `
+                            <div class="food-result-item" style="cursor: default;">
+                                <div class="food-result-name">${MFPImport.escapeHtml(en.name)}</div>
+                                <div class="food-result-info">${en.date} · ${en.meal} · ${Math.round(en.calories)} cal | P: ${Math.round(en.protein)}g C: ${Math.round(en.carbs)}g F: ${Math.round(en.fat)}g</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button id="mfp-commit-btn" class="btn" style="width: 100%; margin-top: var(--spacing-md);">Import ${entries.length} Entries</button>
+                `;
+                document.getElementById('mfp-commit-btn').addEventListener('click', () => {
+                    const result = NutritionManager.importEntries(mfpParsedEntries);
+                    preview.innerHTML = `<p class="text-muted">Imported ${result.added} entries across ${result.touchedDates.length} day${result.touchedDates.length === 1 ? '' : 's'}.</p>`;
+                    document.getElementById('mfp-paste-input').value = '';
+                    mfpParsedEntries = null;
+                    updateNutritionDisplay();
+                });
+            });
         });
 
         /* ============================================
