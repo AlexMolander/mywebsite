@@ -17,6 +17,7 @@
     <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         /* ============================================
@@ -982,6 +983,20 @@
     </style>
 </head>
 <body>
+    <div id="cloud-auth-overlay" style="position:fixed;inset:0;background:rgba(10,10,15,0.94);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:inherit;">
+      <div style="background:#10121b;border:1px solid #232838;border-radius:10px;padding:28px;width:300px;">
+        <div style="color:#00d9ff;font-weight:700;margin-bottom:4px;letter-spacing:0.04em;">SYNC ACROSS DEVICES</div>
+        <div style="color:#7d8798;font-size:12px;margin-bottom:16px;">Sign in once, same data everywhere.</div>
+        <input id="cloud-auth-email" type="email" placeholder="Email" autocomplete="username" style="width:100%;padding:9px;margin-bottom:8px;background:#0a0a0f;border:1px solid #232838;color:#e8ecf5;border-radius:4px;box-sizing:border-box;">
+        <input id="cloud-auth-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:9px;margin-bottom:12px;background:#0a0a0f;border:1px solid #232838;color:#e8ecf5;border-radius:4px;box-sizing:border-box;">
+        <div style="display:flex;gap:8px;">
+          <button id="cloud-auth-signin" style="flex:1;padding:9px;background:#00d9ff;border:none;border-radius:4px;font-weight:700;cursor:pointer;">Sign In</button>
+          <button id="cloud-auth-signup" style="flex:1;padding:9px;background:transparent;border:1px solid #00d9ff;color:#00d9ff;border-radius:4px;cursor:pointer;">Sign Up</button>
+        </div>
+        <div id="cloud-auth-status" style="color:#7d8798;font-size:12px;margin-top:10px;min-height:16px;"></div>
+        <button id="cloud-auth-skip" style="width:100%;margin-top:14px;background:transparent;border:none;color:#5b6472;font-size:11px;text-decoration:underline;cursor:pointer;">Skip — use this device only</button>
+      </div>
+    </div>
     <div id="app">
         <div id="viewport">
             <!-- DASHBOARD SECTION -->
@@ -1401,9 +1416,124 @@
             return { getState, setState, updateNutrition };
         })();
 
+        // MODULE: Cloud Sync (Supabase) — additive cross-device sync.
+        // localStorage stays the fast local cache; this mirrors the whole
+        // state blob to Postgres so every device sees the same data.
+        const CloudSync = (() => {
+            const SUPABASE_URL = 'https://scmldjfbfnaumhfyokre.supabase.co';
+            const SUPABASE_ANON_KEY = 'sb_publishable_3PSHJsnpjn0A49kTVYvrZw_zkcbfusy';
+            const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            let pushTimer = null;
+            let applyingRemote = false;
+
+            const getSession = async () => {
+                const { data } = await client.auth.getSession();
+                return data.session;
+            };
+
+            const signUp = (email, password) => client.auth.signUp({ email, password });
+            const signIn = (email, password) => client.auth.signInWithPassword({ email, password });
+            const signOut = () => client.auth.signOut();
+
+            const pull = async () => {
+                const session = await getSession();
+                if (!session) return null;
+                const { data, error } = await client
+                    .from('app_state')
+                    .select('state, updated_at')
+                    .eq('user_id', session.user.id)
+                    .maybeSingle();
+                if (error) { console.error('Cloud pull failed:', error); return null; }
+                return data ? data.state : null;
+            };
+
+            const push = (state) => {
+                clearTimeout(pushTimer);
+                pushTimer = setTimeout(async () => {
+                    const session = await getSession();
+                    if (!session) return;
+                    const { error } = await client
+                        .from('app_state')
+                        .upsert({ user_id: session.user.id, state, updated_at: new Date().toISOString() });
+                    if (error) console.error('Cloud push failed:', error);
+                }, 1500);
+            };
+
+            const applyRemoteState = (remoteState) => {
+                applyingRemote = true;
+                EventBus.setState(remoteState);
+                applyingRemote = false;
+            };
+
+            const isApplyingRemote = () => applyingRemote;
+
+            return { getSession, signUp, signIn, signOut, pull, push, applyRemoteState, isApplyingRemote };
+        })();
+
+        // Push to the cloud on every local state change, except when the
+        // change came FROM a cloud pull (avoids a push/pull feedback loop).
+        document.addEventListener('state-updated', (e) => {
+            if (!CloudSync.isApplyingRemote()) {
+                CloudSync.push(e.detail);
+            }
+        });
+
+        // MODULE: Auth overlay wiring
+        const AuthOverlay = (() => {
+            const overlay = document.getElementById('cloud-auth-overlay');
+            const emailInput = document.getElementById('cloud-auth-email');
+            const passwordInput = document.getElementById('cloud-auth-password');
+            const statusEl = document.getElementById('cloud-auth-status');
+
+            const hide = () => { overlay.style.display = 'none'; };
+
+            const setStatus = (msg, isError) => {
+                statusEl.textContent = msg;
+                statusEl.style.color = isError ? '#d1372f' : '#7d8798';
+            };
+
+            const afterSignIn = async () => {
+                setStatus('Syncing...');
+                const remoteState = await CloudSync.pull();
+                const localState = EventBus.getState();
+                if (remoteState && (!localState.lastUpdated || remoteState.lastUpdated > localState.lastUpdated)) {
+                    CloudSync.applyRemoteState(remoteState);
+                } else {
+                    CloudSync.push(localState);
+                }
+                hide();
+            };
+
+            const init = async () => {
+                const session = await CloudSync.getSession();
+                if (session) { afterSignIn(); return; }
+
+                document.getElementById('cloud-auth-signin').addEventListener('click', async () => {
+                    setStatus('Signing in...');
+                    const { error } = await CloudSync.signIn(emailInput.value.trim(), passwordInput.value);
+                    if (error) { setStatus(error.message, true); return; }
+                    afterSignIn();
+                });
+
+                document.getElementById('cloud-auth-signup').addEventListener('click', async () => {
+                    setStatus('Creating account...');
+                    const { error } = await CloudSync.signUp(emailInput.value.trim(), passwordInput.value);
+                    if (error) { setStatus(error.message, true); return; }
+                    setStatus('Account created — check email to confirm if required, then Sign In.');
+                });
+
+                document.getElementById('cloud-auth-skip').addEventListener('click', () => {
+                    hide();
+                });
+            };
+
+            return { init };
+        })();
+
         // Initialize app
         document.addEventListener('DOMContentLoaded', () => {
             Navigation.init();
+            AuthOverlay.init();
 
             // Setup event listeners for data management buttons
             document.getElementById('export-data')?.addEventListener('click', () => {
