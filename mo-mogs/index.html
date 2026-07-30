@@ -12,7 +12,7 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Oswald:wght@200;400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Oswald:wght@200;400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- External Libraries -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
@@ -24,25 +24,28 @@
            DESIGN SYSTEM & VARIABLES
            ============================================ */
         :root {
-            /* Colors */
-            --color-navy: #0a0e27;
+            /* Colors — premium black (STNDRD-inspired) */
+            --color-navy: #000000;
             --color-black: #000000;
-            --color-dark-bg: #0f1629;
-            --color-panel: #1a1f2e;
-            --color-border: #2a3142;
-            --color-blue: #00d9ff;
-            --color-blue-dark: #0099bb;
-            --color-blue-light: #33e6ff;
-            --color-text: #e0e0e0;
-            --color-text-muted: #909099;
-            --color-accent: #ff006e;
-            --color-success: #00ff41;
-            --color-warning: #ffbe0b;
+            --color-dark-bg: #0a0a0a;
+            --color-panel: #141414;
+            --color-border: #262626;
+            --color-blue: #d4b06a;
+            --color-blue-dark: #a3854f;
+            --color-blue-light: #e8cf9a;
+            --color-text: #f2f2f0;
+            --color-text-muted: #8a8a8a;
+            --color-accent: #d4b06a;
+            --color-success: #6fcf87;
+            --color-warning: #d4b06a;
+            --radius-md: 14px;
+            --radius-sm: 8px;
+            --radius-pill: 999px;
 
             /* Typography */
-            --font-display: 'Space Grotesk', monospace;
+            --font-display: 'Inter', sans-serif;
             --font-heading: 'Oswald', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
+            --font-mono: 'Inter', sans-serif;
 
             /* Sizing */
             --spacing-xs: 0.25rem;
@@ -90,7 +93,7 @@
         }
 
         /* ============================================
-           AURORA BACKGROUND ANIMATION
+           BACKGROUND — subtle single glow, no scanline/aurora
            ============================================ */
         body::before {
             content: '';
@@ -99,42 +102,9 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background:
-                radial-gradient(circle at 20% 50%, rgba(0, 217, 255, 0.08) 0%, transparent 50%),
-                radial-gradient(circle at 80% 80%, rgba(0, 99, 187, 0.05) 0%, transparent 50%);
-            animation: auroraShift 8s ease-in-out infinite;
+            background: radial-gradient(circle at 50% 0%, rgba(212, 176, 106, 0.06) 0%, transparent 55%);
             pointer-events: none;
             z-index: 0;
-        }
-
-        @keyframes auroraShift {
-            0%, 100% {
-                opacity: 0.5;
-            }
-            50% {
-                opacity: 1;
-            }
-        }
-
-        /* ============================================
-           SCANLINE EFFECT (OVERLAY)
-           ============================================ */
-        body::after {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: repeating-linear-gradient(
-                0deg,
-                rgba(0, 0, 0, 0.15),
-                rgba(0, 0, 0, 0.15) 2px,
-                transparent 2px,
-                transparent 4px
-            );
-            pointer-events: none;
-            z-index: 1;
         }
 
         /* ============================================
@@ -188,40 +158,11 @@
         .panel {
             background: var(--color-panel);
             border: 1px solid var(--color-border);
-            border-radius: 2px;
+            border-radius: var(--radius-md);
             padding: var(--spacing-lg);
             margin-bottom: var(--spacing-lg);
             position: relative;
             overflow: hidden;
-
-            /* HUD corner frames */
-            box-shadow:
-                inset 0 0 0 1px var(--color-blue),
-                0 0 20px rgba(0, 217, 255, 0.1);
-        }
-
-        .panel::before,
-        .panel::after {
-            content: '';
-            position: absolute;
-            width: 20px;
-            height: 20px;
-            border: 2px solid var(--color-blue);
-            opacity: 0.6;
-        }
-
-        .panel::before {
-            top: -1px;
-            left: -1px;
-            border-right: none;
-            border-bottom: none;
-        }
-
-        .panel::after {
-            bottom: -1px;
-            right: -1px;
-            border-left: none;
-            border-top: none;
         }
 
         /* ============================================
@@ -233,18 +174,18 @@
             font-weight: 700;
             margin-bottom: var(--spacing-lg);
             text-transform: uppercase;
-            letter-spacing: 2px;
-            color: var(--color-blue-light);
+            letter-spacing: 1px;
+            color: var(--color-text);
         }
 
         h2 {
             font-family: var(--font-heading);
-            font-size: 1.5rem;
+            font-size: 1.35rem;
             font-weight: 600;
             margin-bottom: var(--spacing-md);
             text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--color-blue);
+            letter-spacing: 0.5px;
+            color: var(--color-text);
         }
 
         h3 {
@@ -262,16 +203,8 @@
             gap: var(--spacing-md);
             margin-bottom: var(--spacing-lg);
             padding-bottom: var(--spacing-md);
-            border-bottom: 2px solid var(--color-blue);
+            border-bottom: 1px solid var(--color-border);
             position: relative;
-        }
-
-        .section-header::before,
-        .section-header::after {
-            content: '';
-            width: 8px;
-            height: 8px;
-            background: var(--color-blue);
         }
 
         .section-header h2 {
@@ -301,10 +234,10 @@
             font-family: var(--font-display);
             font-size: 1rem;
             padding: var(--spacing-md) var(--spacing-lg);
-            background: linear-gradient(135deg, var(--color-blue) 0%, var(--color-blue-dark) 100%);
-            color: var(--color-black);
-            border: 2px solid var(--color-blue);
-            border-radius: 0;
+            background: var(--color-text);
+            color: #0a0a0a;
+            border: 1px solid var(--color-text);
+            border-radius: var(--radius-pill);
             cursor: pointer;
             font-weight: 600;
             text-transform: uppercase;
@@ -320,20 +253,8 @@
             touch-action: manipulation;
         }
 
-        button::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 217, 255, 0.2);
-            transition: left 0.2s ease;
-            z-index: -1;
-        }
-
-        button:hover::before {
-            left: 0;
+        button:hover {
+            opacity: 0.85;
         }
 
         button:active {
@@ -347,8 +268,8 @@
 
         .btn-secondary {
             background: transparent;
-            color: var(--color-blue);
-            border: 2px solid var(--color-blue);
+            color: var(--color-text);
+            border: 1px solid var(--color-border);
         }
 
         .btn-small {
@@ -366,7 +287,7 @@
             background: var(--color-dark-bg);
             color: var(--color-text);
             border: 1px solid var(--color-border);
-            border-radius: 0;
+            border-radius: var(--radius-sm);
             outline: none;
             transition: all 0.2s ease;
             min-height: 44px;
@@ -374,7 +295,6 @@
 
         input:focus, textarea:focus, select:focus {
             border-color: var(--color-blue);
-            box-shadow: 0 0 10px rgba(0, 217, 255, 0.3);
         }
 
         input[type="number"] {
@@ -419,10 +339,10 @@
            STAT CARD (for displaying key metrics)
            ============================================ */
         .stat-card {
-            background: linear-gradient(135deg, rgba(0, 217, 255, 0.05) 0%, transparent 100%);
-            border: 1px solid var(--color-blue);
+            background: var(--color-panel);
+            border: 1px solid var(--color-border);
             padding: var(--spacing-lg);
-            border-radius: 2px;
+            border-radius: var(--radius-md);
             text-align: center;
             position: relative;
         }
@@ -488,7 +408,7 @@
 
         .nav-item.active {
             color: var(--color-blue);
-            background: rgba(0, 217, 255, 0.1);
+            background: rgba(212, 176, 106, 0.1);
             border-top: 3px solid var(--color-blue);
         }
 
@@ -627,11 +547,11 @@
         }
 
         .macro-item {
-            background: rgba(0, 217, 255, 0.05);
+            background: rgba(212, 176, 106, 0.05);
             border: 1px solid var(--color-border);
             padding: var(--spacing-md);
             text-align: center;
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
         }
 
         .macro-item.protein {
@@ -667,11 +587,11 @@
         }
 
         .meal-item {
-            background: rgba(0, 217, 255, 0.03);
+            background: rgba(212, 176, 106, 0.03);
             border: 1px solid var(--color-border);
             padding: var(--spacing-md);
             margin-bottom: var(--spacing-md);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -708,7 +628,7 @@
         .scanner-container {
             background: var(--color-black);
             border: 2px solid var(--color-blue);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             overflow: hidden;
             margin-bottom: var(--spacing-lg);
         }
@@ -737,7 +657,7 @@
             max-height: 300px;
             overflow-y: auto;
             border: 1px solid var(--color-border);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             margin-top: var(--spacing-md);
         }
 
@@ -749,7 +669,7 @@
         }
 
         .food-result-item:hover {
-            background: rgba(0, 217, 255, 0.1);
+            background: rgba(212, 176, 106, 0.1);
         }
 
         .food-result-item:last-child {
@@ -834,10 +754,10 @@
            WORKOUT-SPECIFIC STYLES
            ============================================ */
         .day-btn {
-            background: rgba(0, 217, 255, 0.05);
+            background: rgba(212, 176, 106, 0.05);
             border: 1px solid var(--color-border);
             padding: var(--spacing-md);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             cursor: pointer;
             transition: all 0.2s ease;
             display: flex;
@@ -848,14 +768,14 @@
         }
 
         .day-btn:hover {
-            background: rgba(0, 217, 255, 0.1);
+            background: rgba(212, 176, 106, 0.1);
             border-color: var(--color-blue);
         }
 
         .day-btn.active {
-            background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, transparent 100%);
+            background: linear-gradient(135deg, rgba(212, 176, 106, 0.2) 0%, transparent 100%);
             border-color: var(--color-blue);
-            box-shadow: 0 0 15px rgba(0, 217, 255, 0.2);
+            box-shadow: 0 0 15px rgba(212, 176, 106, 0.2);
         }
 
         .day-btn .day-name {
@@ -873,23 +793,23 @@
 
         /* Exercise Card */
         .exercise-card {
-            background: rgba(0, 217, 255, 0.03);
+            background: rgba(212, 176, 106, 0.03);
             border: 1px solid var(--color-border);
             padding: var(--spacing-md);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             cursor: pointer;
             transition: all 0.2s ease;
         }
 
         .exercise-card:hover {
-            background: rgba(0, 217, 255, 0.08);
+            background: rgba(212, 176, 106, 0.08);
             border-color: var(--color-blue);
         }
 
         .exercise-card.active {
-            background: rgba(0, 217, 255, 0.12);
+            background: rgba(212, 176, 106, 0.12);
             border-color: var(--color-blue);
-            box-shadow: inset 0 0 10px rgba(0, 217, 255, 0.1);
+            box-shadow: inset 0 0 10px rgba(212, 176, 106, 0.1);
         }
 
         .exercise-header {
@@ -922,7 +842,7 @@
         .set-item {
             background: var(--color-panel);
             padding: var(--spacing-sm) var(--spacing-md);
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -947,7 +867,7 @@
             padding: 2px 8px;
             font-size: 0.75rem;
             cursor: pointer;
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
         }
 
         .set-delete:hover {
@@ -958,7 +878,7 @@
             background: var(--color-success);
             color: var(--color-black);
             padding: 2px 6px;
-            border-radius: 2px;
+            border-radius: var(--radius-sm);
             font-size: 0.75rem;
             font-weight: 700;
             text-transform: uppercase;
@@ -977,21 +897,88 @@
         }
 
         .add-set-btn:hover {
-            background: rgba(0, 217, 255, 0.1);
+            background: rgba(212, 176, 106, 0.1);
             border-style: solid;
+        }
+
+        /* Exercise substitution dropdown */
+        .exercise-select {
+            flex: 1;
+            font-weight: 600;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: transparent;
+            border: none;
+            padding: 0;
+            min-height: auto;
+            color: var(--color-text);
+        }
+
+        /* Pre-filled set rows */
+        .set-row {
+            display: grid;
+            grid-template-columns: 20px 1fr 1fr 1fr auto;
+            gap: var(--spacing-sm);
+            align-items: center;
+            background: var(--color-panel);
+            padding: var(--spacing-sm);
+            border-radius: var(--radius-sm);
+        }
+
+        .set-row-num {
+            color: var(--color-text-muted);
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        .set-row input {
+            padding: var(--spacing-sm);
+            font-size: 0.9rem;
+            min-height: 38px;
+        }
+
+        .set-save-btn {
+            background: var(--color-blue);
+            color: #0a0a0a;
+            border: none;
+            border-radius: var(--radius-pill);
+            width: 32px;
+            height: 32px;
+            min-width: 32px;
+            min-height: 32px;
+            padding: 0;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        .set-last-hint {
+            grid-column: 1 / -1;
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+            font-family: var(--font-mono);
+        }
+
+        @media (max-width: 480px) {
+            .set-row {
+                grid-template-columns: 1fr 1fr 1fr auto;
+            }
+            .set-row-num {
+                display: none;
+            }
         }
     </style>
 </head>
 <body>
     <div id="cloud-auth-overlay" style="position:fixed;inset:0;background:rgba(10,10,15,0.94);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:inherit;">
-      <div style="background:#10121b;border:1px solid #232838;border-radius:10px;padding:28px;width:300px;">
-        <div style="color:#00d9ff;font-weight:700;margin-bottom:4px;letter-spacing:0.04em;">SYNC ACROSS DEVICES</div>
+      <div style="background:#141414;border:1px solid #262626;border-radius:10px;padding:28px;width:300px;">
+        <div style="color:#d4b06a;font-weight:700;margin-bottom:4px;letter-spacing:0.04em;">SYNC ACROSS DEVICES</div>
         <div style="color:#7d8798;font-size:12px;margin-bottom:16px;">Sign in once, same data everywhere.</div>
-        <input id="cloud-auth-email" type="email" placeholder="Email" autocomplete="username" style="width:100%;padding:9px;margin-bottom:8px;background:#0a0a0f;border:1px solid #232838;color:#e8ecf5;border-radius:4px;box-sizing:border-box;">
-        <input id="cloud-auth-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:9px;margin-bottom:12px;background:#0a0a0f;border:1px solid #232838;color:#e8ecf5;border-radius:4px;box-sizing:border-box;">
+        <input id="cloud-auth-email" type="email" placeholder="Email" autocomplete="username" style="width:100%;padding:9px;margin-bottom:8px;background:#0a0a0a;border:1px solid #262626;color:#f2f2f0;border-radius:4px;box-sizing:border-box;">
+        <input id="cloud-auth-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:9px;margin-bottom:12px;background:#0a0a0a;border:1px solid #262626;color:#f2f2f0;border-radius:4px;box-sizing:border-box;">
         <div style="display:flex;gap:8px;">
-          <button id="cloud-auth-signin" style="flex:1;padding:9px;background:#00d9ff;border:none;border-radius:4px;font-weight:700;cursor:pointer;">Sign In</button>
-          <button id="cloud-auth-signup" style="flex:1;padding:9px;background:transparent;border:1px solid #00d9ff;color:#00d9ff;border-radius:4px;cursor:pointer;">Sign Up</button>
+          <button id="cloud-auth-signin" style="flex:1;padding:9px;background:#d4b06a;border:none;border-radius:4px;font-weight:700;cursor:pointer;">Sign In</button>
+          <button id="cloud-auth-signup" style="flex:1;padding:9px;background:transparent;border:1px solid #d4b06a;color:#d4b06a;border-radius:4px;cursor:pointer;">Sign Up</button>
         </div>
         <div id="cloud-auth-status" style="color:#7d8798;font-size:12px;margin-top:10px;min-height:16px;"></div>
         <button id="cloud-auth-skip" style="width:100%;margin-top:14px;background:transparent;border:none;color:#5b6472;font-size:11px;text-decoration:underline;cursor:pointer;">Skip — use this device only</button>
@@ -1137,37 +1124,16 @@
 
                 <!-- Day Selector -->
                 <div class="panel">
-                    <h3 style="margin-bottom: var(--spacing-md);">Select Day</h3>
-                    <div class="day-selector" style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-sm);">
-                        <button class="day-btn active" data-day="1">
-                            <div class="day-name">Push</div>
-                            <div class="day-carbs">350g</div>
-                        </button>
-                        <button class="day-btn" data-day="2">
-                            <div class="day-name">Pull</div>
-                            <div class="day-carbs">350g</div>
-                        </button>
-                        <button class="day-btn" data-day="3">
-                            <div class="day-name">Legs</div>
-                            <div class="day-carbs">450g</div>
-                        </button>
-                        <button class="day-btn" data-day="4">
-                            <div class="day-name">Shoulders+Abs</div>
-                            <div class="day-carbs">450g</div>
-                        </button>
-                        <button class="day-btn" data-day="5">
-                            <div class="day-name">Upper</div>
-                            <div class="day-carbs">350g</div>
-                        </button>
-                        <button class="day-btn" data-day="6">
-                            <div class="day-name">Lower</div>
-                            <div class="day-carbs">450g</div>
-                        </button>
-                        <button class="day-btn" data-day="rest" style="grid-column: 1 / -1;">
-                            <div class="day-name">Rest Day</div>
-                            <div class="day-carbs">300g</div>
-                        </button>
-                    </div>
+                    <h3 style="margin-bottom: var(--spacing-md);">Workout</h3>
+                    <select id="day-select" style="width: 100%;">
+                        <option value="1">Push — 350g carbs</option>
+                        <option value="2">Pull — 350g carbs</option>
+                        <option value="3">Legs — 450g carbs</option>
+                        <option value="4">Shoulders + Abs — 450g carbs</option>
+                        <option value="5">Upper — 350g carbs</option>
+                        <option value="6">Lower — 450g carbs</option>
+                        <option value="rest">Rest Day</option>
+                    </select>
                 </div>
 
                 <!-- Workout Display -->
@@ -1182,20 +1148,6 @@
                     <!-- Exercises List -->
                     <div id="exercises-list" style="display: flex; flex-direction: column; gap: var(--spacing-md);">
                         <!-- Exercises will be injected here -->
-                    </div>
-
-                    <!-- Add Set to Exercise -->
-                    <div id="set-form" class="hidden" style="margin-top: var(--spacing-lg); padding-top: var(--spacing-lg); border-top: 1px solid var(--color-border);">
-                        <h3 id="form-exercise-name" style="margin-bottom: var(--spacing-md);">Add Set</h3>
-                        <div class="grid grid-3" style="margin-bottom: var(--spacing-md);">
-                            <input type="number" id="set-reps" placeholder="Reps" min="1" max="100">
-                            <input type="number" id="set-weight" placeholder="Weight (lbs)" min="0" step="2.5">
-                            <input type="number" id="set-rpe" placeholder="RPE (1-10)" min="1" max="10">
-                        </div>
-                        <div class="grid grid-2" style="gap: var(--spacing-md);">
-                            <button id="submit-set" class="btn" style="width: 100%;">Add Set</button>
-                            <button id="cancel-set" class="btn btn-secondary" style="width: 100%;">Cancel</button>
-                        </div>
                     </div>
                 </div>
             </section>
@@ -1964,6 +1916,41 @@
            WORKOUT MODULE
            ============================================ */
 
+        // Substitute options per exercise — used when the planned movement
+        // isn't available (machine taken, injury, different gym, etc.)
+        const EXERCISE_SUBS = {
+            'Cable Front Delt': ['Dumbbell Front Raise', 'Machine Shoulder Press'],
+            'Cable Side Delt': ['Dumbbell Lateral Raise', 'Machine Lateral Raise'],
+            'Incline Smith Machine': ['Incline Dumbbell Press', 'Incline Barbell Press'],
+            'JM Press': ['Close Grip Bench Press', 'Overhead Cable Tricep Extension'],
+            'Machine Chest Fly': ['Cable Chest Fly', 'Dumbbell Fly'],
+            'Single Arm Extension': ['Rope Tricep Pushdown', 'Overhead Dumbbell Extension'],
+            'Low to High Cable Flies': ['Incline Dumbbell Fly', 'Cable Crossover Low'],
+            'Single Arm Overhead Extension': ['Rope Pushdown', 'Skull Crushers'],
+            'Decline Crunch': ['Cable Crunch', 'Hanging Leg Raise'],
+            'Dragon Flies': ['Hanging Leg Raise', 'Cable Crunch'],
+            'Machine Rear Delt Fly': ['Cable Rear Delt Fly', 'Dumbbell Rear Delt Fly'],
+            'Wide Grip Lat Pulldown': ['Close Grip Lat Pulldown', 'Pull-Ups'],
+            'Alternating Incline Curl': ['Standing Dumbbell Curl', 'Cable Curl'],
+            'Chest Supported Row': ['Seated Cable Row', 'Barbell Row'],
+            'Wide Chest Supported Row': ['Wide Grip Seated Row', 'T-Bar Row'],
+            'Single Arm Cable Baysain Curl': ['Single Arm Dumbbell Curl', 'Cable Curl'],
+            'Single Arm Preacher Curl': ['Preacher Curl Machine', 'EZ Bar Preacher Curl'],
+            'Single Arm Cable Forearm Curl': ['Dumbbell Wrist Curl', 'Reverse Cable Curl'],
+            'Reverse Cable Curl': ['Reverse Barbell Curl', 'Hammer Curl'],
+            'Seated Calve Raise': ['Standing Calf Raise', 'Leg Press Calf Raise'],
+            'Leg Extension': ['Sissy Squat', 'Bodyweight Squat'],
+            'Leg Curl': ['Seated Leg Curl', 'Nordic Curl'],
+            'Hip Abduction': ['Cable Hip Abduction', 'Band Hip Abduction'],
+            'Leg Press': ['Hack Squat', 'Barbell Squat'],
+            'Walking Lunges': ['Bulgarian Split Squat', 'Reverse Lunges'],
+            'Leg Curl Machine': ['Lying Leg Curl', 'Stability Ball Curl'],
+            'Calf Raises': ['Seated Calf Raise', 'Single Leg Calf Raise'],
+            'Cable Side Delt Raise': ['Dumbbell Lateral Raise', 'Machine Lateral Raise'],
+            'Machine Shoulder Press': ['Dumbbell Shoulder Press', 'Barbell Overhead Press']
+        };
+        const DEFAULT_PLANNED_SETS = 3;
+
         // WORKOUT SPLIT DATA (Alex's exact split)
         const WORKOUT_SPLIT = {
             1: {
@@ -2062,9 +2049,28 @@
         // MODULE: Workout Manager
         const WorkoutManager = (() => {
             const getTodayKey = () => new Date().toISOString().split('T')[0];
-            const getTodayDayOfWeek = () => new Date().getDay();
 
-            const addSet = (dayNum, exerciseName, reps, weight, rpe) => {
+            // Which exercise is actually being logged for a given day + slot
+            // (defaults to the planned exercise unless a substitute was picked).
+            const getActiveExercise = (dayNum, defaultName) => {
+                const state = EventBus.getState();
+                const key = `${dayNum}_${defaultName}`;
+                return (state.workouts.substitutions && state.workouts.substitutions[key]) || defaultName;
+            };
+
+            const setSubstitution = (dayNum, defaultName, chosenName) => {
+                const state = EventBus.getState();
+                if (!state.workouts.substitutions) state.workouts.substitutions = {};
+                const key = `${dayNum}_${defaultName}`;
+                if (chosenName === defaultName) {
+                    delete state.workouts.substitutions[key];
+                } else {
+                    state.workouts.substitutions[key] = chosenName;
+                }
+                EventBus.setState(state);
+            };
+
+            const addOrUpdateSet = (dayNum, exerciseName, setIndex, reps, weight, dropWeight) => {
                 const state = EventBus.getState();
                 const today = getTodayKey();
 
@@ -2075,61 +2081,56 @@
                     session = { date: today, day: dayNum, exercises: {} };
                     state.workouts.sessions.push(session);
                 }
-
-                if (!session.exercises[exerciseName]) {
-                    session.exercises[exerciseName] = [];
-                }
+                if (!session.exercises[exerciseName]) session.exercises[exerciseName] = [];
 
                 const set = {
-                    id: Date.now(),
-                    reps: parseInt(reps),
-                    weight: parseFloat(weight),
-                    rpe: parseInt(rpe),
+                    id: setIndex,
+                    reps: reps === '' ? null : parseInt(reps),
+                    weight: weight === '' ? null : parseFloat(weight),
+                    dropWeight: (dropWeight === '' || dropWeight == null) ? null : parseFloat(dropWeight),
                     timestamp: new Date().toISOString()
                 };
 
-                session.exercises[exerciseName].push(set);
+                session.exercises[exerciseName][setIndex] = set;
                 EventBus.setState(state);
                 return set;
             };
 
-            const deleteSet = (dayNum, exerciseName, setId) => {
-                const state = EventBus.getState();
-                const today = getTodayKey();
-
-                const session = state.workouts.sessions?.find(s => s.date === today && s.day === dayNum);
-                if (session && session.exercises[exerciseName]) {
-                    session.exercises[exerciseName] = session.exercises[exerciseName].filter(s => s.id !== setId);
-                    EventBus.setState(state);
-                }
-            };
-
-            const getSetsForExercise = (dayNum, exerciseName) => {
+            const getTodaySets = (dayNum, exerciseName) => {
                 const state = EventBus.getState();
                 const today = getTodayKey();
                 const session = state.workouts.sessions?.find(s => s.date === today && s.day === dayNum);
                 return session?.exercises[exerciseName] || [];
             };
 
+            // Most recent PRIOR session (any day) that logged this exercise —
+            // used to show "last time" next to each set input.
+            const getLastSession = (exerciseName) => {
+                const state = EventBus.getState();
+                const today = getTodayKey();
+                const past = (state.workouts.sessions || [])
+                    .filter(s => s.date !== today && s.exercises?.[exerciseName]?.length)
+                    .sort((a, b) => b.date.localeCompare(a.date));
+                return past[0]?.exercises[exerciseName] || null;
+            };
+
             const getPRForExercise = (exerciseName) => {
                 const state = EventBus.getState();
                 let maxWeight = 0;
-
                 state.workouts.sessions?.forEach(session => {
-                    const sets = session.exercises?.[exerciseName] || [];
-                    sets.forEach(set => {
-                        if (set.weight > maxWeight) maxWeight = set.weight;
+                    (session.exercises?.[exerciseName] || []).forEach(set => {
+                        if (set && set.weight > maxWeight) maxWeight = set.weight;
                     });
                 });
-
                 return maxWeight;
             };
 
-            const isNewPR = (exerciseName, weight) => {
-                return weight > getPRForExercise(exerciseName);
-            };
+            const isNewPR = (exerciseName, weight) => weight > getPRForExercise(exerciseName);
 
-            return { addSet, deleteSet, getSetsForExercise, getPRForExercise, isNewPR, getTodayKey };
+            return {
+                addOrUpdateSet, getTodaySets, getLastSession, getPRForExercise, isNewPR,
+                getActiveExercise, setSubstitution, getTodayKey
+            };
         })();
 
         // UI: Render workout display
@@ -2137,127 +2138,91 @@
             const day = WORKOUT_SPLIT[dayNum];
             if (!day) return;
 
+            document.getElementById('day-select').value = dayNum;
             document.getElementById('current-workout-name').textContent = day.name + ' Day';
             document.getElementById('current-carbs').textContent = day.carbTarget + 'g';
 
             const exercisesList = document.getElementById('exercises-list');
             exercisesList.innerHTML = '';
 
-            day.exercises.forEach(exercise => {
-                const sets = WorkoutManager.getSetsForExercise(dayNum, exercise);
-                const pr = WorkoutManager.getPRForExercise(exercise);
+            day.exercises.forEach(defaultExercise => {
+                const activeExercise = WorkoutManager.getActiveExercise(dayNum, defaultExercise);
+                const subs = EXERCISE_SUBS[defaultExercise] || [];
+                const allOptions = [defaultExercise, ...subs];
+
+                const todaySets = WorkoutManager.getTodaySets(dayNum, activeExercise);
+                const lastSets = WorkoutManager.getLastSession(activeExercise);
+                const pr = WorkoutManager.getPRForExercise(activeExercise);
 
                 const card = document.createElement('div');
                 card.className = 'exercise-card';
+
+                const rows = [];
+                for (let i = 0; i < DEFAULT_PLANNED_SETS; i++) {
+                    const existing = todaySets[i] || {};
+                    const last = lastSets && lastSets[i];
+                    const lastHint = last
+                        ? `Last: ${last.reps ?? '–'} x ${last.weight ?? '–'}lbs${last.dropWeight ? ' → ' + last.dropWeight + 'lbs' : ''}`
+                        : 'Last: —';
+                    rows.push(`
+                        <div class="set-row" data-set-index="${i}">
+                            <span class="set-row-num">${i + 1}</span>
+                            <input type="number" class="set-reps-input" placeholder="Reps" min="0" max="100" value="${existing.reps ?? ''}">
+                            <input type="number" class="set-weight-input" placeholder="Weight" min="0" step="2.5" value="${existing.weight ?? ''}">
+                            <input type="number" class="set-drop-input" placeholder="Drop wt (opt)" min="0" step="2.5" value="${existing.dropWeight ?? ''}">
+                            <button class="set-save-btn" title="Save set">✓</button>
+                            <div class="set-last-hint">${lastHint}</div>
+                        </div>
+                    `);
+                }
+
                 card.innerHTML = `
                     <div class="exercise-header">
-                        <div class="exercise-name">${exercise}</div>
-                        <div class="exercise-progress">
-                            ${sets.length} set${sets.length !== 1 ? 's' : ''}
-                            ${pr > 0 ? `| PR: ${pr}lbs` : ''}
-                        </div>
+                        <select class="exercise-select">
+                            ${allOptions.map(opt => `<option value="${opt}" ${opt === activeExercise ? 'selected' : ''}>${opt}</option>`).join('')}
+                        </select>
+                        <div class="exercise-progress">${pr > 0 ? `PR: ${pr}lbs` : 'No PR yet'}</div>
                     </div>
-                    ${sets.length > 0 ? `
-                        <div class="sets-list">
-                            ${sets.map(set => {
-                                const isPR = set.weight === WorkoutManager.getPRForExercise(exercise);
-                                return `
-                                    <div class="set-item">
-                                        <div class="set-info">
-                                            <strong>${set.reps}x${set.weight}lbs</strong>
-                                            ${isPR ? '<span class="pr-badge">🎉 PR!</span>' : ''}
-                                            <div class="set-stats">
-                                                <span>RPE ${set.rpe}</span>
-                                                <span>${new Date(set.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                            </div>
-                                        </div>
-                                        <button class="set-delete" data-exercise="${exercise}" data-set-id="${set.id}" data-day="${dayNum}">Delete</button>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    ` : ''}
-                    <button class="add-set-btn" data-exercise="${exercise}" data-day="${dayNum}">+ Add Set</button>
+                    <div class="sets-list">
+                        ${rows.join('')}
+                    </div>
                 `;
+
+                // Exercise substitution dropdown
+                card.querySelector('.exercise-select').addEventListener('change', (e) => {
+                    WorkoutManager.setSubstitution(dayNum, defaultExercise, e.target.value);
+                    renderWorkout(dayNum);
+                });
+
+                // Per-set save buttons
+                card.querySelectorAll('.set-row').forEach(row => {
+                    const setIndex = parseInt(row.dataset.setIndex);
+                    row.querySelector('.set-save-btn').addEventListener('click', () => {
+                        const reps = row.querySelector('.set-reps-input').value;
+                        const weight = row.querySelector('.set-weight-input').value;
+                        const dropWeight = row.querySelector('.set-drop-input').value;
+                        if (reps === '' && weight === '') return;
+
+                        const wasNewPR = weight !== '' && WorkoutManager.isNewPR(activeExercise, parseFloat(weight));
+                        WorkoutManager.addOrUpdateSet(dayNum, activeExercise, setIndex, reps, weight, dropWeight);
+
+                        if (wasNewPR) {
+                            row.style.animation = 'pulse 0.5s ease-in-out';
+                            setTimeout(() => { row.style.animation = ''; }, 500);
+                        }
+                        renderWorkout(dayNum);
+                    });
+                });
 
                 exercisesList.appendChild(card);
             });
-
-            // Attach event listeners
-            document.querySelectorAll('.add-set-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const exercise = e.target.dataset.exercise;
-                    const day = e.target.dataset.day;
-                    openSetForm(day, exercise);
-                });
-            });
-
-            document.querySelectorAll('.set-delete').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const exercise = e.target.dataset.exercise;
-                    const setId = parseInt(e.target.dataset.setId);
-                    const day = e.target.dataset.day;
-                    WorkoutManager.deleteSet(day, exercise, setId);
-                    renderWorkout(day);
-                });
-            });
-        };
-
-        // UI: Set form
-        let currentSetForm = { day: null, exercise: null };
-
-        const openSetForm = (day, exercise) => {
-            currentSetForm = { day, exercise };
-            document.getElementById('form-exercise-name').textContent = exercise;
-            document.getElementById('set-form').classList.remove('hidden');
-            document.getElementById('set-reps').focus();
-            document.getElementById('set-form').scrollIntoView({ behavior: 'smooth' });
-        };
-
-        const closeSetForm = () => {
-            currentSetForm = { day: null, exercise: null };
-            document.getElementById('set-form').classList.add('hidden');
-            document.getElementById('set-reps').value = '';
-            document.getElementById('set-weight').value = '';
-            document.getElementById('set-rpe').value = '';
         };
 
         // Initialize Workouts
         document.addEventListener('DOMContentLoaded', () => {
-            // Day selector
-            document.querySelectorAll('.day-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    const day = btn.dataset.day === 'rest' ? 'rest' : btn.dataset.day;
-                    renderWorkout(day);
-                });
+            document.getElementById('day-select').addEventListener('change', (e) => {
+                renderWorkout(e.target.value === 'rest' ? 'rest' : e.target.value);
             });
-
-            // Set form handlers
-            document.getElementById('submit-set').addEventListener('click', () => {
-                const reps = document.getElementById('set-reps').value;
-                const weight = document.getElementById('set-weight').value;
-                const rpe = document.getElementById('set-rpe').value;
-
-                if (reps && weight && rpe && currentSetForm.exercise) {
-                    const isPR = WorkoutManager.isNewPR(currentSetForm.exercise, parseFloat(weight));
-                    WorkoutManager.addSet(currentSetForm.day, currentSetForm.exercise, reps, weight, rpe);
-
-                    if (isPR) {
-                        // Celebration animation (could expand this)
-                        document.getElementById('set-form').style.animation = 'pulse 0.5s ease-in-out';
-                        setTimeout(() => {
-                            document.getElementById('set-form').style.animation = '';
-                        }, 500);
-                    }
-
-                    renderWorkout(currentSetForm.day);
-                    closeSetForm();
-                }
-            });
-
-            document.getElementById('cancel-set').addEventListener('click', closeSetForm);
 
             // Initialize with day 1
             renderWorkout(1);
