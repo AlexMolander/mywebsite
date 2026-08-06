@@ -946,7 +946,7 @@
         /* Pre-filled set rows */
         .set-row {
             display: grid;
-            grid-template-columns: 20px 1fr 1fr 1fr auto auto;
+            grid-template-columns: 20px 1fr 1fr 1fr auto;
             gap: var(--spacing-sm);
             align-items: center;
             background: var(--color-panel);
@@ -1225,7 +1225,9 @@
                     <div class="flex-between" style="margin-bottom: var(--spacing-lg);">
                         <h3 id="current-workout-name">Push Day</h3>
                         <span class="stat-card" style="padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--color-border); background: transparent;">
-                            <div style="font-family: var(--font-mono); font-size: 0.9rem;">Target: <span id="current-carbs">350g</span></div>
+                            <div style="font-family: var(--font-mono); font-size: 0.9rem; display: flex; align-items: center; gap: 6px;">
+                                Target: <input type="number" id="current-carbs-input" min="0" step="5" style="width: 64px; padding: 2px 6px; min-height: auto; font-size: 0.9rem;">g
+                            </div>
                         </span>
                     </div>
 
@@ -1233,6 +1235,15 @@
                     <div id="exercises-list" style="display: flex; flex-direction: column; gap: var(--spacing-md);">
                         <!-- Exercises will be injected here -->
                     </div>
+                </div>
+
+                <!-- Add an unplanned exercise for today -->
+                <div class="panel">
+                    <div id="add-exercise-form" class="hidden" style="display: flex; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm);">
+                        <input type="text" id="new-exercise-name" placeholder="Exercise name" style="flex: 1;">
+                        <button id="confirm-add-exercise-btn" class="btn btn-small">Add</button>
+                    </div>
+                    <button id="show-add-exercise-btn" class="add-set-btn" style="display: block;">+ Add Exercise</button>
                 </div>
             </section>
 
@@ -1244,26 +1255,6 @@
 
                 <div class="panel">
                     <p class="text-muted">Journal entries coming soon...</p>
-                </div>
-            </section>
-
-            <!-- CLAUDE LOG SECTION -->
-            <section id="claude-log" class="section">
-                <div class="section-header">
-                    <h2>Claude Log</h2>
-                </div>
-
-                <div class="panel">
-                    <h3 style="margin-bottom: var(--spacing-sm); color: var(--color-blue-light);">Your Snapshot</h3>
-                    <p class="text-muted" style="margin-bottom: var(--spacing-md);">
-                        Copy this and paste it into a Claude chat — training questions, nutrition, accountability, whatever you need. It knows your real data because you just gave it to it.
-                    </p>
-                    <pre id="coach-summary-text" class="text-mono" style="white-space: pre-wrap; background: var(--color-dark-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--spacing-md); font-size: 0.8rem; max-height: 320px; overflow-y: auto; margin-bottom: var(--spacing-md);">Generating…</pre>
-                    <button id="coach-copy-btn" class="btn" style="width: 100%;">Copy Summary</button>
-                </div>
-
-                <div id="claude-log-list">
-                    <p class="text-muted">Loading…</p>
                 </div>
             </section>
 
@@ -1299,9 +1290,6 @@
             </button>
             <button class="nav-item" data-section="journal">
                 <div>Journal</div>
-            </button>
-            <button class="nav-item" data-section="claude-log">
-                <div>Claude</div>
             </button>
             <button class="nav-item" data-section="settings">
                 <div>Settings</div>
@@ -1607,153 +1595,6 @@
             setInterval(renderHealthDashboard, 5 * 60 * 1000);
         });
 
-        // MODULE: Claude Log — a running changelog of what's been built/is in
-        // progress, written to a public-read Supabase table whenever something
-        // ships. Not a chat; just a status feed.
-        const ClaudeLog = (() => {
-            const fetchEntries = async () => {
-                const { data, error } = await CloudSync.client
-                    .from('claude_log')
-                    .select('title, description, status, created_at')
-                    .order('created_at', { ascending: false })
-                    .limit(30);
-                if (error) { console.error('Claude log fetch failed:', error); return []; }
-                return data || [];
-            };
-            return { fetchEntries };
-        })();
-
-        const escapeHtmlGlobal = (str) => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-        const renderClaudeLog = async () => {
-            const listEl = document.getElementById('claude-log-list');
-            if (!listEl) return;
-            listEl.innerHTML = '<p class="text-muted">Loading…</p>';
-            const entries = await ClaudeLog.fetchEntries();
-            if (!entries.length) {
-                listEl.innerHTML = '<p class="text-muted">Nothing logged yet.</p>';
-                return;
-            }
-            listEl.innerHTML = entries.map(e => `
-                <div class="panel" style="margin-bottom: var(--spacing-md); ${e.status === 'in_progress' ? 'opacity: 0.7;' : ''}">
-                    <div class="flex-between" style="margin-bottom: var(--spacing-xs);">
-                        <h3 style="margin-bottom: 0;">${escapeHtmlGlobal(e.title)}</h3>
-                        <span class="text-muted" style="font-size: 0.75rem; white-space: nowrap; margin-left: var(--spacing-md);">
-                            ${e.status === 'in_progress' ? 'In progress' : new Date(e.created_at).toLocaleDateString()}
-                        </span>
-                    </div>
-                    <p class="text-muted" style="margin-bottom: 0;">${escapeHtmlGlobal(e.description)}</p>
-                </div>
-            `).join('');
-        };
-
-        // Builds a plain-text snapshot of real training/nutrition/Watch data —
-        // meant to be copy-pasted into a Claude chat so it has real context
-        // instead of guessing. Not a live agent; just gets the facts across.
-        const generateCoachSummary = async () => {
-            const state = EventBus.getState();
-            const lines = [];
-            const today = new Date();
-            lines.push(`Mo Mogs snapshot — ${today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`);
-            lines.push('');
-
-            lines.push('RECENT WORKOUTS');
-            const sessions = (state.workouts.sessions || []).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
-            if (!sessions.length) {
-                lines.push('No workouts logged yet.');
-            } else {
-                sessions.forEach(s => {
-                    const dayName = (WORKOUT_SPLIT[s.day] && WORKOUT_SPLIT[s.day].name) || `Day ${s.day}`;
-                    lines.push(`${s.date} — ${dayName}`);
-                    Object.entries(s.exercises || {}).forEach(([name, sets]) => {
-                        const validSets = (sets || []).filter(Boolean);
-                        if (!validSets.length) return;
-                        const setStr = validSets.map(st => `${st.reps ?? '-'}x${st.weight ?? '-'}lbs${st.dropWeight ? ' -> ' + st.dropWeight + 'lbs' : ''}`).join(', ');
-                        lines.push(`  ${name}: ${setStr}`);
-                    });
-                });
-            }
-            lines.push('');
-
-            lines.push('RECENT NUTRITION');
-            const nutritionDates = Object.keys(state.nutrition.daily || {}).sort().reverse().slice(0, 3);
-            if (!nutritionDates.length) {
-                lines.push('No meals logged yet.');
-            } else {
-                nutritionDates.forEach(date => {
-                    const day = state.nutrition.daily[date];
-                    const t = day.totals || {};
-                    lines.push(`${date}: ${Math.round(t.calories || 0)} cal | P ${Math.round(t.protein || 0)}g C ${Math.round(t.carbs || 0)}g F ${Math.round(t.fats || 0)}g (${(day.meals || []).length} items)`);
-                });
-            }
-            lines.push('');
-
-            lines.push('APPLE WATCH (TODAY)');
-            try {
-                const session = await CloudSync.getSession();
-                if (session) {
-                    const [steps, energy, workout] = await Promise.all([
-                        HealthSync.getTodaySteps(), HealthSync.getLatestActiveEnergy(), HealthSync.getLastWorkout()
-                    ]);
-                    lines.push(`Steps: ${steps ? Number(steps.steps).toLocaleString() : '--'}`);
-                    lines.push(`Active calories: ${energy ? Math.round(energy.qty) : '--'}`);
-                    lines.push(`Last workout: ${workout ? (workout.workout_type || 'Workout') + (workout.duration_min ? ' (' + Math.round(workout.duration_min) + 'm)' : '') : 'None yet'}`);
-                } else {
-                    lines.push('Not signed in — Apple Watch data unavailable.');
-                }
-            } catch (e) {
-                lines.push('Apple Watch data unavailable.');
-            }
-            lines.push('');
-
-            let streak = 0;
-            for (let i = 0; i < 60; i++) {
-                const d = new Date();
-                d.setDate(d.getDate() - i);
-                const key = d.toISOString().split('T')[0];
-                const hasWorkout = (state.workouts.sessions || []).some(s => s.date === key);
-                const hasNutrition = !!state.nutrition.daily[key];
-                if (hasWorkout || hasNutrition) streak++; else break;
-            }
-            lines.push(`CONSISTENCY: ${streak}-day streak of logging something (workout or food)`);
-
-            return lines.join('\n');
-        };
-
-        const renderCoachSummary = async () => {
-            const el = document.getElementById('coach-summary-text');
-            if (!el) return;
-            el.textContent = 'Generating…';
-            el.textContent = await generateCoachSummary();
-        };
-
-        document.addEventListener('DOMContentLoaded', () => {
-            renderCoachSummary();
-            document.getElementById('coach-copy-btn').addEventListener('click', async () => {
-                const btn = document.getElementById('coach-copy-btn');
-                try {
-                    await navigator.clipboard.writeText(document.getElementById('coach-summary-text').textContent);
-                    const original = btn.textContent;
-                    btn.textContent = 'Copied';
-                    setTimeout(() => { btn.textContent = original; }, 1500);
-                } catch (e) {
-                    console.error('Copy failed:', e);
-                    btn.textContent = 'Copy failed — select text manually';
-                }
-            });
-        });
-
-        document.addEventListener('DOMContentLoaded', () => {
-            renderClaudeLog();
-            document.querySelectorAll('.nav-item').forEach(item => {
-                if (item.dataset.section === 'claude-log') {
-                    item.addEventListener('click', () => {
-                        renderClaudeLog();
-                        renderCoachSummary();
-                    });
-                }
-            });
-        });
 
         // Push to the cloud on every local state change, except when the
         // change came FROM a cloud pull (avoids a push/pull feedback loop).
@@ -2800,15 +2641,70 @@
         const WorkoutManager = (() => {
             const getTodayKey = () => new Date().toISOString().split('T')[0];
 
-            // Which exercise is actually being logged for a given day + slot
-            // (defaults to the planned exercise unless a substitute was picked).
+            // Which exercise is actually being logged for a given day + slot.
+            // Priority: today-only swap (if made today) > permanent default swap
+            // > the originally planned exercise.
             const getActiveExercise = (dayNum, defaultName) => {
                 const state = EventBus.getState();
                 const key = `${dayNum}_${defaultName}`;
+                const today = getTodayKey();
+                const temp = state.workouts.tempSubstitutions && state.workouts.tempSubstitutions[key];
+                if (temp && temp.date === today) return temp.exercise;
                 return (state.workouts.substitutions && state.workouts.substitutions[key]) || defaultName;
             };
 
-            const setSubstitution = (dayNum, defaultName, chosenName) => {
+            // True when today's active exercise is a same-day-only swap that
+            // hasn't been promoted to a permanent default yet.
+            const isTempOnlySubstitution = (dayNum, defaultName) => {
+                const state = EventBus.getState();
+                const key = `${dayNum}_${defaultName}`;
+                const today = getTodayKey();
+                const temp = state.workouts.tempSubstitutions && state.workouts.tempSubstitutions[key];
+                return !!(temp && temp.date === today);
+            };
+
+            // Move any already-saved sets logged today from one exercise name to
+            // another — so swapping the dropdown mid-workout doesn't strand data
+            // under the old name.
+            const migrateTodaySets = (dayNum, fromName, toName) => {
+                if (fromName === toName) return;
+                const state = EventBus.getState();
+                const today = getTodayKey();
+                const session = state.workouts.sessions && state.workouts.sessions.find(s => s.date === today && s.day === dayNum);
+                if (!session || !session.exercises[fromName]) return;
+                const fromSets = session.exercises[fromName];
+                const hasData = fromSets.some(Boolean);
+                if (!hasData) return;
+                const toHasData = session.exercises[toName] && session.exercises[toName].some(Boolean);
+                if (!toHasData) {
+                    session.exercises[toName] = fromSets;
+                    delete session.exercises[fromName];
+                    EventBus.setState(state);
+                }
+            };
+
+            // Default behavior when swapping the exercise dropdown — applies to
+            // today's session only, resets automatically next session, same as
+            // reorder. Carries forward any sets already logged today.
+            const setTempSubstitution = (dayNum, defaultName, chosenName) => {
+                const oldActive = getActiveExercise(dayNum, defaultName);
+                migrateTodaySets(dayNum, oldActive, chosenName);
+
+                const state = EventBus.getState();
+                if (!state.workouts.tempSubstitutions) state.workouts.tempSubstitutions = {};
+                const key = `${dayNum}_${defaultName}`;
+                const permanentChoice = state.workouts.substitutions && state.workouts.substitutions[key];
+                if (chosenName === (permanentChoice || defaultName)) {
+                    delete state.workouts.tempSubstitutions[key];
+                } else {
+                    state.workouts.tempSubstitutions[key] = { date: getTodayKey(), exercise: chosenName };
+                }
+                EventBus.setState(state);
+            };
+
+            // Promotes today's swap to the permanent default for this slot —
+            // applies to all future sessions until changed again.
+            const setPermanentSubstitution = (dayNum, defaultName, chosenName) => {
                 const state = EventBus.getState();
                 if (!state.workouts.substitutions) state.workouts.substitutions = {};
                 const key = `${dayNum}_${defaultName}`;
@@ -2816,6 +2712,79 @@
                     delete state.workouts.substitutions[key];
                 } else {
                     state.workouts.substitutions[key] = chosenName;
+                }
+                if (state.workouts.tempSubstitutions) delete state.workouts.tempSubstitutions[key];
+                EventBus.setState(state);
+            };
+
+            // Permanent per-day carb target override, editable from the workout
+            // screen — persists until changed again.
+            const getCarbTarget = (dayNum, defaultTarget) => {
+                const state = EventBus.getState();
+                const override = state.workouts.carbOverrides && state.workouts.carbOverrides[dayNum];
+                return override != null ? override : defaultTarget;
+            };
+
+            const setCarbTarget = (dayNum, value) => {
+                const state = EventBus.getState();
+                if (!state.workouts.carbOverrides) state.workouts.carbOverrides = {};
+                state.workouts.carbOverrides[dayNum] = value;
+                EventBus.setState(state);
+            };
+
+            // Exercises permanently saved for this day (planned defaults + any
+            // ad-hoc additions promoted to "future workouts").
+            const getBaseExercises = (dayNum, defaultExercises) => {
+                const state = EventBus.getState();
+                const custom = (state.workouts.customExercises && state.workouts.customExercises[dayNum]) || [];
+                return defaultExercises.concat(custom);
+            };
+
+            // Adds a not-yet-planned exercise to today's session only, appended
+            // to the end of today's display order.
+            const addAdHocExercise = (dayNum, defaultExercises, name) => {
+                const state = EventBus.getState();
+                const today = getTodayKey();
+
+                if (!state.workouts.adHocToday) state.workouts.adHocToday = {};
+                if (!state.workouts.adHocToday[dayNum] || state.workouts.adHocToday[dayNum].date !== today) {
+                    state.workouts.adHocToday[dayNum] = { date: today, names: [] };
+                }
+                if (!state.workouts.adHocToday[dayNum].names.includes(name)) {
+                    state.workouts.adHocToday[dayNum].names.push(name);
+                }
+
+                if (!state.workouts.tempOrder) state.workouts.tempOrder = {};
+                const custom = (state.workouts.customExercises && state.workouts.customExercises[dayNum]) || [];
+                const baseOrder = defaultExercises.concat(custom);
+                const existingTemp = state.workouts.tempOrder[dayNum];
+                const order = (existingTemp && existingTemp.date === today) ? existingTemp.order.slice() : baseOrder.slice();
+                if (!order.includes(name)) order.push(name);
+                state.workouts.tempOrder[dayNum] = { date: today, order };
+
+                EventBus.setState(state);
+            };
+
+            const isAdHocToday = (dayNum, name) => {
+                const state = EventBus.getState();
+                const today = getTodayKey();
+                const entry = state.workouts.adHocToday && state.workouts.adHocToday[dayNum];
+                return !!(entry && entry.date === today && entry.names.includes(name));
+            };
+
+            // Promotes an ad-hoc addition into the permanent list for this day —
+            // shows up in every future session from here on.
+            const promoteAdHocToPermanent = (dayNum, name) => {
+                const state = EventBus.getState();
+                if (!state.workouts.customExercises) state.workouts.customExercises = {};
+                if (!state.workouts.customExercises[dayNum]) state.workouts.customExercises[dayNum] = [];
+                if (!state.workouts.customExercises[dayNum].includes(name)) {
+                    state.workouts.customExercises[dayNum].push(name);
+                }
+                const today = getTodayKey();
+                const entry = state.workouts.adHocToday && state.workouts.adHocToday[dayNum];
+                if (entry && entry.date === today) {
+                    entry.names = entry.names.filter(n => n !== name);
                 }
                 EventBus.setState(state);
             };
@@ -2932,10 +2901,15 @@
 
             return {
                 addOrUpdateSet, getTodaySets, getLastSession, getPRForExercise, isNewPR,
-                getActiveExercise, setSubstitution, getTodayKey, deleteTodaySet,
-                getDisplayOrder, moveExercise, getVolumeHistory
+                getActiveExercise, isTempOnlySubstitution, setTempSubstitution, setPermanentSubstitution,
+                getTodayKey, deleteTodaySet, getDisplayOrder, moveExercise, getVolumeHistory,
+                getCarbTarget, setCarbTarget, getBaseExercises, addAdHocExercise, isAdHocToday, promoteAdHocToPermanent
             };
         })();
+
+        // Debounce timers for set-row autosave, keyed per day+exercise+set-index
+        // so typing in one row never cancels another row's pending save.
+        const setAutosaveTimers = {};
 
         // UI: Render workout display
         const renderWorkout = (dayNum) => {
@@ -2944,18 +2918,22 @@
 
             document.getElementById('day-select').value = dayNum;
             document.getElementById('current-workout-name').textContent = day.name + ' Day';
-            document.getElementById('current-carbs').textContent = day.carbTarget + 'g';
+            const carbsInput = document.getElementById('current-carbs-input');
+            carbsInput.value = WorkoutManager.getCarbTarget(dayNum, day.carbTarget);
 
             const exercisesList = document.getElementById('exercises-list');
             exercisesList.innerHTML = '';
 
-            const displayOrder = WorkoutManager.getDisplayOrder(dayNum, day.exercises);
+            const baseExercises = WorkoutManager.getBaseExercises(dayNum, day.exercises);
+            const displayOrder = WorkoutManager.getDisplayOrder(dayNum, baseExercises);
 
             displayOrder.forEach((defaultExercise, orderIndex) => {
                 const activeExercise = WorkoutManager.getActiveExercise(dayNum, defaultExercise);
                 const subs = EXERCISE_SUBS[defaultExercise] || [];
                 const allOptions = [defaultExercise, ...subs];
                 const plannedSets = SET_COUNT_OVERRIDES[`${dayNum}_${defaultExercise}`] || DEFAULT_PLANNED_SETS;
+                const isTempSwap = WorkoutManager.isTempOnlySubstitution(dayNum, defaultExercise);
+                const isAdHoc = WorkoutManager.isAdHocToday(dayNum, defaultExercise);
 
                 const todaySets = WorkoutManager.getTodaySets(dayNum, activeExercise);
                 const lastSets = WorkoutManager.getLastSession(activeExercise);
@@ -2977,7 +2955,6 @@
                             <input type="number" class="set-reps-input" placeholder="Reps" min="0" max="100" value="${existing.reps ?? ''}">
                             <input type="number" class="set-weight-input" placeholder="Weight" min="0" step="2.5" value="${existing.weight ?? ''}">
                             <input type="number" class="set-drop-input" placeholder="Drop wt (opt)" min="0" step="2.5" value="${existing.dropWeight ?? ''}">
-                            <button class="set-save-btn" title="Save set">Save</button>
                             <button class="set-delete-btn" title="Delete this set">Delete</button>
                             <div class="set-last-hint">${lastHint}</div>
                         </div>
@@ -2995,9 +2972,11 @@
                         </select>
                         <div class="exercise-progress">${pr > 0 ? `PR: ${pr}lbs` : 'No PR yet'}</div>
                     </div>
+                    ${isTempSwap ? '<button class="btn btn-secondary btn-small make-default-btn" style="width: 100%; margin-bottom: var(--spacing-sm);">Set as default for this day</button>' : ''}
                     <div class="sets-list">
                         ${rows.join('')}
                     </div>
+                    ${isAdHoc ? '<button class="btn btn-secondary btn-small save-adhoc-btn" style="width: 100%; margin-top: var(--spacing-sm);">Save for future workouts</button>' : ''}
                     <button class="btn btn-secondary btn-small progress-toggle-btn" style="width: 100%; margin-top: var(--spacing-sm);">Progress</button>
                     <div class="progress-chart-wrap hidden" style="margin-top: var(--spacing-sm);"></div>
                 `;
@@ -3006,37 +2985,79 @@
                 card.querySelectorAll('.reorder-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const dir = parseInt(btn.dataset.dir);
-                        WorkoutManager.moveExercise(dayNum, day.exercises, defaultExercise, dir);
+                        WorkoutManager.moveExercise(dayNum, baseExercises, defaultExercise, dir);
                         renderWorkout(dayNum);
                     });
                 });
 
-                // Exercise substitution dropdown
+                // Exercise substitution — defaults to today-only, carries any
+                // already-saved sets to the new name.
                 card.querySelector('.exercise-select').addEventListener('change', (e) => {
-                    WorkoutManager.setSubstitution(dayNum, defaultExercise, e.target.value);
+                    // Flush any pending autosaves for this card first, so typed-
+                    // but-not-yet-saved values commit under the old exercise
+                    // name before the swap moves data.
+                    Object.keys(setAutosaveTimers).forEach(key => {
+                        if (key.startsWith(`${dayNum}_${activeExercise}_`)) {
+                            clearTimeout(setAutosaveTimers[key].timer);
+                            setAutosaveTimers[key].run();
+                            delete setAutosaveTimers[key];
+                        }
+                    });
+                    WorkoutManager.setTempSubstitution(dayNum, defaultExercise, e.target.value);
                     renderWorkout(dayNum);
                 });
 
-                // Per-set save + delete buttons
+                if (isTempSwap) {
+                    card.querySelector('.make-default-btn').addEventListener('click', () => {
+                        WorkoutManager.setPermanentSubstitution(dayNum, defaultExercise, activeExercise);
+                        renderWorkout(dayNum);
+                    });
+                }
+
+                if (isAdHoc) {
+                    card.querySelector('.save-adhoc-btn').addEventListener('click', () => {
+                        WorkoutManager.promoteAdHocToPermanent(dayNum, defaultExercise);
+                        renderWorkout(dayNum);
+                    });
+                }
+
+                // Autosave per set row — debounced on input, no button needed.
+                // Delete stays explicit since it's destructive.
                 card.querySelectorAll('.set-row').forEach(row => {
                     const setIndex = parseInt(row.dataset.setIndex);
-                    row.querySelector('.set-save-btn').addEventListener('click', () => {
-                        const reps = row.querySelector('.set-reps-input').value;
-                        const weight = row.querySelector('.set-weight-input').value;
-                        const dropWeight = row.querySelector('.set-drop-input').value;
-                        if (reps === '' && weight === '') return;
+                    const repsInput = row.querySelector('.set-reps-input');
+                    const weightInput = row.querySelector('.set-weight-input');
+                    const dropInput = row.querySelector('.set-drop-input');
+                    const timerKey = `${dayNum}_${activeExercise}_${setIndex}`;
+
+                    const runAutosave = () => {
+                        const reps = repsInput.value;
+                        const weight = weightInput.value;
+                        const dropWeight = dropInput.value;
+                        if (reps === '' && weight === '' && dropWeight === '') return;
 
                         const wasNewPR = weight !== '' && WorkoutManager.isNewPR(activeExercise, parseFloat(weight));
                         WorkoutManager.addOrUpdateSet(dayNum, activeExercise, setIndex, reps, weight, dropWeight);
 
                         if (wasNewPR) {
+                            const progressEl = card.querySelector('.exercise-progress');
+                            if (progressEl) progressEl.textContent = `PR: ${weight}lbs`;
                             row.style.animation = 'pulse 0.5s ease-in-out';
                             setTimeout(() => { row.style.animation = ''; }, 500);
                         }
-                        renderWorkout(dayNum);
+                        delete setAutosaveTimers[timerKey];
+                    };
+
+                    [repsInput, weightInput, dropInput].forEach(input => {
+                        input.addEventListener('input', () => {
+                            if (setAutosaveTimers[timerKey]) clearTimeout(setAutosaveTimers[timerKey].timer);
+                            const timer = setTimeout(runAutosave, 600);
+                            setAutosaveTimers[timerKey] = { timer, run: runAutosave };
+                        });
                     });
 
                     row.querySelector('.set-delete-btn').addEventListener('click', () => {
+                        if (setAutosaveTimers[timerKey]) { clearTimeout(setAutosaveTimers[timerKey].timer); delete setAutosaveTimers[timerKey]; }
                         WorkoutManager.deleteTodaySet(dayNum, activeExercise, setIndex);
                         renderWorkout(dayNum);
                     });
@@ -3092,6 +3113,35 @@
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('day-select').addEventListener('change', (e) => {
                 renderWorkout(e.target.value === 'rest' ? 'rest' : e.target.value);
+            });
+
+            // Carb target — editable, saved on change, persists per day.
+            document.getElementById('current-carbs-input').addEventListener('change', (e) => {
+                const dayVal = document.getElementById('day-select').value;
+                const dayNum = dayVal === 'rest' ? 'rest' : dayVal;
+                const value = parseFloat(e.target.value) || 0;
+                WorkoutManager.setCarbTarget(dayNum, value);
+            });
+
+            // Add an unplanned exercise for today, with the option to promote
+            // it to a permanent part of that day's workout afterward.
+            document.getElementById('show-add-exercise-btn').addEventListener('click', () => {
+                document.getElementById('add-exercise-form').classList.remove('hidden');
+                document.getElementById('show-add-exercise-btn').classList.add('hidden');
+                document.getElementById('new-exercise-name').focus();
+            });
+            document.getElementById('confirm-add-exercise-btn').addEventListener('click', () => {
+                const nameInput = document.getElementById('new-exercise-name');
+                const name = nameInput.value.trim();
+                if (!name) return;
+                const dayVal = document.getElementById('day-select').value;
+                const dayNum = dayVal === 'rest' ? 'rest' : dayVal;
+                const defaultExercises = (WORKOUT_SPLIT[dayNum] && WORKOUT_SPLIT[dayNum].exercises) || [];
+                WorkoutManager.addAdHocExercise(dayNum, defaultExercises, name);
+                nameInput.value = '';
+                document.getElementById('add-exercise-form').classList.add('hidden');
+                document.getElementById('show-add-exercise-btn').classList.remove('hidden');
+                renderWorkout(dayNum);
             });
 
             // Initialize with day 1
